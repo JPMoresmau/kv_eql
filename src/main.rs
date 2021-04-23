@@ -14,11 +14,12 @@ fn main() {
     {
     let mut db = DB::open_cf_descriptors(&db_opts, path, vec![cf]).unwrap();
     let ocf1=db.cf_handle("cf2");
-    let cf1=if ocf1.is_none(){
-        db.create_cf("cf2", &Options::default()).unwrap();
-        db.cf_handle("cf2").unwrap()
-    } else {
-        ocf1.unwrap()
+    let cf1=match ocf1{
+        None=> {
+            db.create_cf("cf2", &Options::default()).unwrap();
+            db.cf_handle("cf2").unwrap()
+        },
+        Some(cf1)=>cf1,
     };
     db.put_cf(cf1, b"my key", b"my value").unwrap();
     match db.get_cf(cf1,b"my key") {
