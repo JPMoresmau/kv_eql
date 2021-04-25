@@ -1,7 +1,7 @@
 use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, DB, ReadOptions, Direction};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::fs::{File, OpenOptions};
+use std::{collections::BTreeMap, fs::{File, OpenOptions}};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::{
@@ -13,17 +13,20 @@ use std::{
 use anyhow::Result;
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operation {
     Scan {
         name: String,
     },
     KeyLookup {
         name: String,
-        key: Box<[u8]>,
+        key: Value,
     },
     Extract {
         names: HashSet<String>,
+        operation: Box<Operation>,
+    },
+    Augment {
+        value: Value,
         operation: Box<Operation>,
     },
     IndexLookup {
@@ -31,6 +34,10 @@ pub enum Operation {
         index_name: String,
         values: Vec<Value>,
         keys: Vec<String>,
+    },
+    NestedLoops {
+        first: Box<Operation>,
+        second: Box<dyn Fn((&Value,&Value)) -> Operation>,
     }
 }
 
@@ -39,7 +46,7 @@ impl Operation {
         Operation::Scan { name: name.into() }
     }
 
-    pub fn key_lookup<N: Into<String>>(name: N, key: Box<[u8]>) -> Self {
+    pub fn key_lookup<N: Into<String>>(name: N, key: Value) -> Self {
         Operation::KeyLookup { name: name.into(),key }
     }
 
@@ -54,11 +61,25 @@ impl Operation {
         }
     }
 
-    pub fn index_lookup<N: Into<String>,IN: Into<String>,OT: AsRef<str>>(name: N, index_name:IN, values: Vec<Value>,
+    pub fn augment(value: Value, operation: Operation) -> Self {
+        Operation::Augment{value, operation: Box::new(operation),}
+    }
+
+    pub fn index_lookup<N: Into<String>,IN: Into<String>>(name: N, index_name:IN, values: Vec<Value>) -> Self {
+        Operation::IndexLookup{name:name.into(), index_name:index_name.into(), values, keys:vec![]}
+    }
+
+    pub fn index_lookup_keys<N: Into<String>,IN: Into<String>,OT: AsRef<str>>(name: N, index_name:IN, values: Vec<Value>,
         keys: Vec<OT>,) -> Self {
         Operation::IndexLookup{name:name.into(), index_name:index_name.into(), values, keys:keys.iter().map(|s| String::from(s.as_ref())).collect()}
     }
+
+    pub fn nested_loops<F>(first: Operation, second: F) -> Self 
+        where F: Fn((&Value,&Value)) -> Operation + 'static {
+        Operation::NestedLoops {first:Box::new(first),second:Box::new(second)}
+    }
 }
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Metadata {
@@ -157,8 +178,9 @@ impl RocksDBEQL {
 
         self.execute(Operation::scan(rec_type.as_ref()))
             .try_for_each(|(k, v)| {
-                let ix_key = index_key(&on, &k, &v);
-                self.db.put_cf(cf1, ix_key, &k)
+                let kv=serde_json::to_vec(&k).unwrap();
+                let ix_key = index_key(&on, &kv, &v);
+                self.db.put_cf(cf1, ix_key, &kv)
             })?;
 
         Ok(())
@@ -189,10 +211,10 @@ impl RocksDBEQL {
         Ok(())
     }
 
-    pub fn insert<T: AsRef<str>, K: AsRef<[u8]>>(
+    pub fn insert<T: AsRef<str>, V: Into<Value>>(
         &mut self,
         rec_type: T,
-        key: K,
+        key: V,
         value: &Value,
     ) -> Result<()> {
         let ref_type = rec_type.as_ref();
@@ -205,16 +227,16 @@ impl RocksDBEQL {
             }
             Some(cf1) => cf1,
         };
-        //let cf=RocksDBMetadata::cf_handle(&mut self.db, rec_type)?;
+        let kv = serde_json::to_vec(&key.into()).unwrap();
         self.db
-            .put_cf(cf, key.as_ref(), serde_json::to_vec(value).unwrap())?;
+            .put_cf(cf, kv.clone(), serde_json::to_vec(value).unwrap())?;
 
         if let Some(idxs) = self.metadata.indices.get(ref_type) {
             for (idx_name, on) in idxs.iter() {
                 let idx_cf = index_cf_name(rec_type.as_ref(), idx_name);
                 if let Some(cf1) = self.db.cf_handle(&idx_cf){
-                    let ix_key = index_key(on, key.as_ref(), value);
-                    self.db.put_cf(cf1, ix_key, key.as_ref())?;
+                    let ix_key = index_key(on, &kv, value);
+                    self.db.put_cf(cf1, ix_key, kv.clone())?;
                 }
             }
         } else {
@@ -225,44 +247,45 @@ impl RocksDBEQL {
         Ok(())
     }
 
-    pub fn get<T: AsRef<str>, K: AsRef<[u8]>>(
+    pub fn get<T: AsRef<str>, V: Into<Value>>(
         &mut self,
         rec_type: T,
-        key: K,
+        key: V,
     ) -> Result<Option<Value>> {
         let ref_type = rec_type.as_ref();
         let ocf1 = self.db.cf_handle(ref_type);
         if let Some(cf1) = ocf1 {
             Ok(self
                 .db
-                .get_cf(cf1, key)?
+                .get_cf(cf1, serde_json::to_vec(&key.into()).unwrap())?
                 .map(|v| serde_json::from_slice(&v).unwrap()))
         } else {
             Ok(None)
         }
     }
 
-    pub fn delete<T: AsRef<str>, K: AsRef<[u8]>>(&mut self, rec_type: T, key: K) -> Result<()> {
+    pub fn delete<T: AsRef<str>, V: Into<Value>>(&mut self, rec_type: T, key: V) -> Result<()> {
         let ref_type = rec_type.as_ref();
         let ocf1 = self.db.cf_handle(ref_type);
         if let Some(cf1) = ocf1 {
+            let kv=serde_json::to_vec(&key.into()).unwrap();
             if let Some(idxs) = self.metadata.indices.get(ref_type) {
                 if !idxs.is_empty() {
                     if let Some(value)=self
                         .db
-                        .get_cf(cf1, key.as_ref())?
+                        .get_cf(cf1, kv.clone())?
                         .map(|v| serde_json::from_slice(&v).unwrap()){
                         for (idx_name, on) in idxs.iter() {
                             let idx_cf = index_cf_name(rec_type.as_ref(), idx_name);
                             if let Some(cf) = self.db.cf_handle(&idx_cf){
-                                let ix_key = index_key(on, key.as_ref(), &value);
+                                let ix_key = index_key(on, &kv, &value);
                                 self.db.delete_cf(cf, ix_key)?;
                             }
                         }
                     }
                 }
             }
-            self.db.delete_cf(cf1, key)?;
+            self.db.delete_cf(cf1, kv)?;
         }
         Ok(())
     }
@@ -270,7 +293,7 @@ impl RocksDBEQL {
     pub fn execute(
         &self,
         operation: Operation,
-    ) -> Box<dyn Iterator<Item = (Box<[u8]>, Value)> + '_> {
+    ) -> Box<dyn Iterator<Item = (Value, Value)> + '_> {
         match operation {
             Operation::Scan { name } => {
                 let ocf1 = self.db.cf_handle(&name);
@@ -278,14 +301,14 @@ impl RocksDBEQL {
                     let it = self
                         .db
                         .iterator_cf(cf1, IteratorMode::Start)
-                        .map(|(k, v)| (k, serde_json::from_slice::<Value>(&v).unwrap()));
+                        .map(|(k, v)| (serde_json::from_slice::<Value>(&k).unwrap(), serde_json::from_slice::<Value>(&v).unwrap()));
                     return Box::new(it);
                 }
             },
             Operation::KeyLookup{name, key} => {
                 let ocf1 = self.db.cf_handle(&name);
                 if let Some(cf1) = ocf1 {
-                    let v=self.db.get_cf(cf1, &key).unwrap().map(|v| (key, serde_json::from_slice::<Value>(&v).unwrap()));
+                    let v=self.db.get_cf(cf1, &serde_json::to_vec(&key).unwrap()).unwrap().map(|v| (key, serde_json::from_slice::<Value>(&v).unwrap()));
                     return Box::new(v.into_iter());
                 }
             },
@@ -296,6 +319,15 @@ impl RocksDBEQL {
                 return Box::new(
                     self.execute(*b_op)
                         .map(move |(k, v)| (k, extract_from_value(v, &names))),
+                );
+            },
+            Operation::Augment{
+                value,
+                operation: b_op
+            } => {
+                return Box::new(
+                    self.execute(*b_op)
+                        .map(move |(k, v)| (k, merge_values(&value, v))),
                 );
             },
             Operation::IndexLookup {
@@ -316,17 +348,38 @@ impl RocksDBEQL {
                     opts.set_iterate_upper_bound(u);
                     let mode = IteratorMode::From(&v.as_ref(), Direction::Forward);
                     let it=self.db.iterator_cf_opt(cf, opts,mode)
-                        .map(move |(k, v)| (v,extract_from_index_key(&k, &keys)));
+                        .map(move |(k, v)| (serde_json::from_slice(&v).unwrap(),extract_from_index_key(&k, &keys)));
                     return Box::new(it);
                 }
+            },
+            Operation::NestedLoops{first,second} => {
+                return Box::new(
+                    self.execute(*first)
+                        .flat_map(move |(k1, v1)| self.execute(second((&k1,&v1))).map(move |(k2,v2)| (k2,v2))),
+                );
             }
         }
-        Box::new(iter::empty::<(Box<[u8]>, Value)>())
+        Box::new(iter::empty::<(Value, Value)>())
     }
 }
 
+fn merge_values(first: &Value, mut second: Value) -> Value {
+    if let Some(m1) = first.as_object() {
+        if !m1.is_empty(){
+            if let Some(m2) = second.as_object_mut() {
+                for (k,v) in m1.iter(){
+                    if !m2.contains_key(k){
+                        m2.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+    }
+    second
+}
+
 fn extract_from_index_key<K:AsRef<[u8]>>(k: K, keys: &[String]) -> Value {
-    let mut im:HashMap<String,Value>=HashMap::new();
+    let mut im:BTreeMap<String,Value>=BTreeMap::new();
     for (part,name) in k.as_ref().split(|u| *u==0).zip(keys.iter()) {
         if !name.is_empty() {
             im.insert(name.clone(),serde_json::from_slice(part).unwrap());
@@ -356,7 +409,7 @@ fn index_cf_name(ref_type: &str, index_name: &str) -> String {
     format!("#idx_{}_{}", ref_type, index_name)
 }
 
-fn index_key<T: AsRef<str>, K: AsRef<[u8]>>(on: &[T], key: K, value: &Value) -> Vec<u8> {
+fn index_key<T: AsRef<str>, K: AsRef<[u8]>>(on: &[T], key: &K, value: &Value) -> Vec<u8> {
     let mut v = vec![];
     for o in on {
         if let Some(v2) = value.pointer(o.as_ref()) {
