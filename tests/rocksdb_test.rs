@@ -2,6 +2,7 @@ use serde_json::json;
 use kv_eql::{RocksDBEQL, Operation};
 use serde_json::Value;
 use anyhow::Result;
+use rocksdb::{WriteBatch};
 
 #[test]
 fn test_basic() -> Result<()>{
@@ -389,5 +390,60 @@ fn test_two_types_nested_loops() -> Result<()> {
 
     }
     RocksDBEQL::destroy(path)?;
+    Ok(())
+}
+
+#[test]
+fn test_batch() -> Result<()>{
+    let path = "test_batch.db";
+    {
+        let mut eql=RocksDBEQL::open(path)?;
+        let john = json!({
+            "name": "John Doe",
+            "age": 43,
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ]
+        });
+        let mut batch=WriteBatch::default();
+
+        eql.batch_insert(&mut batch, "type1", "key1", &john)?;
+
+        let mary = json!({
+            "name": "Mary Doe",
+            "age": 34
+        });
+        
+        eql.batch_insert(&mut batch,"type1", "key2", &mary)?;
+
+        let v1:Vec<(Value,Value)>=eql.execute(Operation::extract(&["name","phones"],Operation::scan("type1"))).collect();
+        assert_eq!(0,v1.len());
+
+        eql.db.write(batch)?;
+
+        //let v1=vec![(b"key1",&john),(b"key2",&mary)];
+        let v1:Vec<(Value,Value)>=eql.execute(Operation::scan("type1")).collect();
+        assert_eq!(2,v1.len());
+        assert_eq!(Value::from("key1"),v1[0].0);
+        assert_eq!(Value::from("key2"),v1[1].0);
+        assert_eq!(john,v1[0].1);
+        assert_eq!(mary,v1[1].1);
+
+        let mut batch=WriteBatch::default();
+
+        eql.batch_delete(&mut batch, "type1", "key1")?;
+        eql.batch_delete(&mut batch,"type1", "key2")?;
+
+        let v1:Vec<(Value,Value)>=eql.execute(Operation::scan("type1")).collect();
+        assert_eq!(2,v1.len());
+
+        eql.db.write(batch)?;
+
+        let v1:Vec<(Value,Value)>=eql.execute(Operation::extract(&["name","phones"],Operation::scan("type1"))).collect();
+        assert_eq!(0,v1.len());
+       
+    }
+    RocksDBEQL::destroy( path)?;
     Ok(())
 }

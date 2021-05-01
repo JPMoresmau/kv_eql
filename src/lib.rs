@@ -1,4 +1,4 @@
-use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, DB, ReadOptions, Direction};
+use rocksdb::{ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options, ReadOptions, WriteBatch};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fs::{File, OpenOptions}};
@@ -10,7 +10,7 @@ use std::{
     iter,
 };
 
-use anyhow::Result;
+use anyhow::{ Result};
 use thiserror::Error;
 
 pub enum Operation {
@@ -87,7 +87,7 @@ pub struct Metadata {
 }
 
 pub struct RocksDBEQL {
-    db: DB,
+    pub db: DB,
     metadata_path: PathBuf,
     pub metadata: Metadata,
 }
@@ -177,10 +177,17 @@ impl RocksDBEQL {
         self.save_metadata()?;
 
         self.execute(Operation::scan(rec_type.as_ref()))
-            .try_for_each(|(k, v)| {
+            .try_fold(WriteBatch::default(), |mut b, (k, v)| {
                 let kv=serde_json::to_vec(&k).unwrap();
                 let ix_key = index_key(&on, &kv, &v);
-                self.db.put_cf(cf1, ix_key, &kv)
+                
+                b.put_cf(cf1, ix_key, &kv);
+                if b.len()>1000 {
+                    self.db.write(b)?;
+                    return Ok(WriteBatch::default());
+                }
+                let r:Result<WriteBatch,rocksdb::Error>=Ok(b);
+                r
             })?;
 
         Ok(())
@@ -217,6 +224,19 @@ impl RocksDBEQL {
         key: V,
         value: &Value,
     ) -> Result<()> {
+        let mut batch=WriteBatch::default();
+        self.batch_insert(&mut batch,rec_type, key,value)?;
+        self.db.write(batch)?;
+        Ok(())
+    }
+
+    pub fn batch_insert<T: AsRef<str>, V: Into<Value>>(
+        &mut self,
+        batch: &mut WriteBatch,
+        rec_type: T,
+        key: V,
+        value: &Value,
+    ) -> Result<()> {
         let ref_type = rec_type.as_ref();
         let ocf1 = self.db.cf_handle(ref_type);
         let cf = match ocf1 {
@@ -228,15 +248,14 @@ impl RocksDBEQL {
             Some(cf1) => cf1,
         };
         let kv = serde_json::to_vec(&key.into()).unwrap();
-        self.db
-            .put_cf(cf, kv.clone(), serde_json::to_vec(value).unwrap())?;
+        batch.put_cf(cf, kv.clone(), serde_json::to_vec(value).unwrap());
 
         if let Some(idxs) = self.metadata.indices.get(ref_type) {
             for (idx_name, on) in idxs.iter() {
                 let idx_cf = index_cf_name(rec_type.as_ref(), idx_name);
                 if let Some(cf1) = self.db.cf_handle(&idx_cf){
                     let ix_key = index_key(on, &kv, value);
-                    self.db.put_cf(cf1, ix_key, kv.clone())?;
+                    batch.put_cf(cf1, ix_key, kv.clone());
                 }
             }
         } else {
@@ -246,6 +265,7 @@ impl RocksDBEQL {
 
         Ok(())
     }
+
 
     pub fn get<T: AsRef<str>, V: Into<Value>>(
         &mut self,
@@ -265,6 +285,13 @@ impl RocksDBEQL {
     }
 
     pub fn delete<T: AsRef<str>, V: Into<Value>>(&mut self, rec_type: T, key: V) -> Result<()> {
+        let mut batch=WriteBatch::default();
+        self.batch_delete(&mut batch,rec_type, key)?;
+        self.db.write(batch)?;
+        Ok(())
+    }
+
+    pub fn batch_delete<T: AsRef<str>, V: Into<Value>>(&mut self,batch: &mut WriteBatch, rec_type: T, key: V) -> Result<()> {
         let ref_type = rec_type.as_ref();
         let ocf1 = self.db.cf_handle(ref_type);
         if let Some(cf1) = ocf1 {
@@ -279,13 +306,13 @@ impl RocksDBEQL {
                             let idx_cf = index_cf_name(rec_type.as_ref(), idx_name);
                             if let Some(cf) = self.db.cf_handle(&idx_cf){
                                 let ix_key = index_key(on, &kv, &value);
-                                self.db.delete_cf(cf, ix_key)?;
+                                batch.delete_cf(cf, ix_key);
                             }
                         }
                     }
                 }
             }
-            self.db.delete_cf(cf1, kv)?;
+            batch.delete_cf(cf1, kv);
         }
         Ok(())
     }
