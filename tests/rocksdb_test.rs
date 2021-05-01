@@ -48,6 +48,13 @@ fn test_scan() -> Result<()>{
     let path = "test_scan.db";
     {
         let mut meta=RocksDBEQL::open(path)?;
+        let mary = json!({
+            "name": "Mary Doe",
+            "age": 34
+        });
+        
+        meta.insert("type1", "key2", &mary)?;
+        
         let john = json!({
             "name": "John Doe",
             "age": 43,
@@ -59,12 +66,7 @@ fn test_scan() -> Result<()>{
         
         meta.insert("type1", "key1", &john)?;
 
-        let mary = json!({
-            "name": "Mary Doe",
-            "age": 34
-        });
-        
-        meta.insert("type1", "key2", &mary)?;
+
 
         //let v1=vec![(b"key1",&john),(b"key2",&mary)];
         let v1:Vec<(Value,Value)>=meta.execute(Operation::scan("type1")).collect();
@@ -244,6 +246,13 @@ fn test_index_lookup() -> Result<()> {
 
         let v1:Vec<(Value,Value)>=eql.execute(Operation::index_lookup_keys("type1","idx1",vec![json!("John Deer"),json!(43)], vec!["nameix","ageix"])).collect();
         assert_eq!(0,v1.len());
+
+        let v1:Vec<(Value,Value)>=eql.execute(Operation::index_lookup_keys("type1","idx1",vec![], vec!["nameix","ageix"])).collect();
+        assert_eq!(2,v1.len());
+        assert_eq!(Value::from("key1"),v1[0].0);
+        assert_eq!(john2,v1[0].1);
+        assert_eq!(Value::from("key2"),v1[1].0);
+        assert_eq!(mary2,v1[1].1);
 
         eql.delete("type1", "key1")?;
         let v1:Vec<(Value,Value)>=eql.execute(Operation::index_lookup_keys("type1","idx1",vec![json!("John Doe")], vec!["nameix","ageix"])).collect();
@@ -463,9 +472,9 @@ fn test_hash() -> Result<()>{
         write_data(&mut eql)?;
         let v1:Vec<(Value,Value)>=eql.execute(
             Operation::hash_lookup(Operation::scan("categories"), 
-                |(k,_v)| k.clone(), 
+                |(k,_v)| Some(k.clone()), 
                 Operation::scan("products"), 
-                |(_k,v)| v.as_object().unwrap().get("category_id").unwrap().clone(), 
+                |(_k,v)| v.as_object().map(|o| o.get("category_id")).flatten().cloned(), 
                 |(o,(k,mut v))| o.map(|(_k1,v1)| {
                     if let Some (d) = v1.as_object().map(|o| o.get("description")).flatten(){
                         v.as_object_mut().unwrap().insert(String::from("description"),d.clone());

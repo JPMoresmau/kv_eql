@@ -41,10 +41,10 @@ pub enum Operation {
     },
     HashLookup {
         build: Box<Operation>,
-        build_hash: Box<dyn Fn((&Value,&Value)) -> Value>,
+        build_hash: Box<dyn Fn(&(Value,Value)) -> Option<Value>>,
         probe: Box<Operation>,
-        probe_hash: Box<dyn Fn((&Value,&Value)) -> Value>,
-        join: Box<dyn Fn((Option<(&Value,&Value)>,(Value,Value))) -> Option<(Value,Value)>>,
+        probe_hash: Box<dyn Fn(&(Value,Value)) -> Option<Value>>,
+        join: Box<dyn Fn((Option<&(Value,Value)>,(Value,Value))) -> Option<(Value,Value)>>,
     }
 }
 
@@ -87,8 +87,8 @@ impl Operation {
     }
 
     pub fn hash_lookup<F1,F2,F3>(build: Operation, build_hash: F1, probe: Operation, probe_hash: F2, join: F3) -> Self 
-        where F1: Fn((&Value,&Value)) -> Value+ 'static, F2: Fn((&Value,&Value)) -> Value + 'static,
-                F3: Fn((Option<(&Value,&Value)>,(Value,Value))) -> Option<(Value,Value)> + 'static  {
+        where F1: Fn(&(Value,Value)) -> Option<Value>+ 'static, F2: Fn(&(Value,Value)) -> Option<Value> + 'static,
+                F3: Fn((Option<&(Value,Value)>,(Value,Value))) -> Option<(Value,Value)> + 'static  {
         Operation::HashLookup{build:Box::new(build),build_hash:Box::new(build_hash),probe:Box::new(probe)
                 , probe_hash:Box::new(probe_hash), join: Box::new(join)}
     }
@@ -376,21 +376,27 @@ impl RocksDBEQL {
             } => {
                 let idx_cf=index_cf_name(&name, &index_name);
                 if let Some(cf) = self.db.cf_handle(&idx_cf) {
-                    let mut v = vec![];
-                   
-                    for o in values.iter() {
-                        v.append(&mut serde_json::to_vec(o).unwrap());
-                        v.push(0);
+                    if values.is_empty(){
+                        let it=self.db.iterator_cf(cf,IteratorMode::Start)
+                            .map(move |(k, v)| (serde_json::from_slice(&v).unwrap(),extract_from_index_key(&k, &keys)));
+                        return Box::new(it);
+                    } else {
+                        let mut v = vec![];
+                    
+                        for o in values.iter() {
+                            v.append(&mut serde_json::to_vec(o).unwrap());
+                            v.push(0);
+                        }
+                        let mut opts = ReadOptions::default();
+                        let mut u=v.clone();
+                        u.pop();
+                        u.push(1);
+                        opts.set_iterate_upper_bound(u);
+                        let mode = IteratorMode::From(&v.as_ref(), Direction::Forward);
+                        let it=self.db.iterator_cf_opt(cf, opts,mode)
+                            .map(move |(k, v)| (serde_json::from_slice(&v).unwrap(),extract_from_index_key(&k, &keys)));
+                        return Box::new(it);
                     }
-                    let mut opts = ReadOptions::default();
-                    let mut u=v.clone();
-                    u.pop();
-                    u.push(1);
-                    opts.set_iterate_upper_bound(u);
-                    let mode = IteratorMode::From(&v.as_ref(), Direction::Forward);
-                    let it=self.db.iterator_cf_opt(cf, opts,mode)
-                        .map(move |(k, v)| (serde_json::from_slice(&v).unwrap(),extract_from_index_key(&k, &keys)));
-                    return Box::new(it);
                 }
             },
             Operation::NestedLoops{first,second} => {
@@ -401,11 +407,13 @@ impl RocksDBEQL {
             },
             Operation::HashLookup{build,build_hash,probe,probe_hash,join} => {
                 let map:HashMap<String,(Value,Value)> = 
-                    self.execute(*build).map(|(k,v)| (format!("{}",build_hash((&k,&v))),(k,v))).collect();
+                    self.execute(*build).flat_map(|kv| build_hash(&kv).map(|s| (format!("{}",s),kv))).collect();
                 return Box::new(self.execute(*probe)
-                    .flat_map(move |(k,v)| {
-                        let hash = format!("{}",probe_hash((&k,&v)));
-                        join((map.get(&hash).map(|(k1,v1)| (k1,v1)),(k,v)))
+                    .flat_map(move |kv| {
+                       probe_hash(&kv).map(|h| {
+                            let hash = format!("{}",h);
+                            join((map.get(&hash),kv))
+                        }).flatten()
                     }))
             }
         }
