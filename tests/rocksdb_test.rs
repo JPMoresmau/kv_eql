@@ -311,89 +311,6 @@ fn test_index_nested_loops() -> Result<()> {
 }
 
 #[test]
-fn test_two_types_nested_loops() -> Result<()> {
-    let path = "test_two_types_nested_loops.db";
-    {
-        let mut eql=RocksDBEQL::open(path)?;
-        let bevs=json!({
-            "category_name":"Beverages",
-            "description":"Soft drinks, coffees, teas, beers, and ales",
-        });
-        let conds=json!({
-            "category_name":"Condiments",
-            "description":"Sweet and savory sauces, relishes, spreads, and seasonings",
-        });
-        eql.insert("categories", 1, &bevs)?;
-        eql.insert("categories", 2, &conds)?;
-     
-        eql.add_index("products", "product_category_id", vec!["/category_id"])?;
-
-        let chai=json!({
-            "product_name":"Chai",
-            "category_id":1,
-        });
-        eql.insert("products", 1, &chai)?;
-        let chang=json!({
-            "product_name":"Chang",
-            "category_id":1,
-            "quantity_per_unit":"10 boxes x 30 bags",
-        });
-        eql.insert("products", 2, &chang)?;
-        let chang=json!({
-            "product_name":"Chang",
-            "category_id":1,
-            "quantity_per_unit":"24 - 12 oz bottles"
-        });
-        eql.insert("products", 2, &chang)?;
-        let aniseed=json!({
-            "product_name":"Aniseed Syrup",
-            "category_id":2,
-            "quantity_per_unit":"12 - 550 ml bottles"
-        });
-        eql.insert("products", 3, &aniseed)?;
-        let cajun=json!({
-            "product_name":"Chef Anton's Cajun Seasoning",
-            "category_id":2,
-            "quantity_per_unit":"48 - 6 oz jars"
-        });
-        eql.insert("products", 4, &cajun)?;
-
-        let v1:Vec<(Value,Value)>=eql.execute(
-            Operation::nested_loops(
-                Operation::extract(&["description"], 
-                        Operation::scan("categories")),
-                    |(k,v)| Operation::augment(v.clone(), 
-                    Operation::nested_loops(
-                        Operation::index_lookup("products","product_category_id", vec![k.clone()]),
-                        |(k,_v)| Operation::key_lookup("products",k.clone())
-                    )
-                    )
-            )).collect();
-        assert_eq!(4,v1.len());
-        let keys1:Vec<Value>=v1.iter().map(|t|t.0.clone()).collect();
-        assert_eq!(true, keys1.contains(&Value::from(1)));
-        assert_eq!(true, keys1.contains(&Value::from(2)));
-        assert_eq!(true, keys1.contains(&Value::from(3)));
-        assert_eq!(true, keys1.contains(&Value::from(4)));
-        assert_eq!(4,v1.iter().filter(|(k,v)| {
-            if let Some(m) = v.as_object() {
-                if k==&Value::from(1) || k==&Value::from(2) {
-                    assert_eq!(Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),m.get("description"));
-                } else {
-                    assert_eq!(Some(&Value::from("Sweet and savory sauces, relishes, spreads, and seasonings")),m.get("description"));
-                }
-                return true;
-            }
-            return false;
-        }).count());
-        
-
-    }
-    RocksDBEQL::destroy(path)?;
-    Ok(())
-}
-
-#[test]
 fn test_batch() -> Result<()>{
     let path = "test_batch.db";
     {
@@ -447,3 +364,134 @@ fn test_batch() -> Result<()>{
     RocksDBEQL::destroy( path)?;
     Ok(())
 }
+
+fn write_data(eql: &mut RocksDBEQL) -> Result<()>{
+    let bevs=json!({
+        "category_name":"Beverages",
+        "description":"Soft drinks, coffees, teas, beers, and ales",
+    });
+    let conds=json!({
+        "category_name":"Condiments",
+        "description":"Sweet and savory sauces, relishes, spreads, and seasonings",
+    });
+    eql.insert("categories", 1, &bevs)?;
+    eql.insert("categories", 2, &conds)?;
+ 
+    eql.add_index("products", "product_category_id", vec!["/category_id"])?;
+
+    let chai=json!({
+        "product_name":"Chai",
+        "category_id":1,
+    });
+    eql.insert("products", 1, &chai)?;
+    let chang=json!({
+        "product_name":"Chang",
+        "category_id":1,
+        "quantity_per_unit":"10 boxes x 30 bags",
+    });
+    eql.insert("products", 2, &chang)?;
+    let chang=json!({
+        "product_name":"Chang",
+        "category_id":1,
+        "quantity_per_unit":"24 - 12 oz bottles"
+    });
+    eql.insert("products", 2, &chang)?;
+    let aniseed=json!({
+        "product_name":"Aniseed Syrup",
+        "category_id":2,
+        "quantity_per_unit":"12 - 550 ml bottles"
+    });
+    eql.insert("products", 3, &aniseed)?;
+    let cajun=json!({
+        "product_name":"Chef Anton's Cajun Seasoning",
+        "category_id":2,
+        "quantity_per_unit":"48 - 6 oz jars"
+    });
+    eql.insert("products", 4, &cajun)?;
+    Ok(())
+}
+
+#[test]
+fn test_two_types_nested_loops() -> Result<()> {
+    let path = "test_two_types_nested_loops.db";
+    {
+        let mut eql=RocksDBEQL::open(path)?;
+        write_data(&mut eql)?;
+
+        let v1:Vec<(Value,Value)>=eql.execute(
+            Operation::nested_loops(
+                Operation::extract(&["description"], 
+                        Operation::scan("categories")),
+                    |(k,v)| Operation::augment(v.clone(), 
+                    Operation::nested_loops(
+                        Operation::index_lookup("products","product_category_id", vec![k.clone()]),
+                        |(k,_v)| Operation::key_lookup("products",k.clone())
+                    )
+                    )
+            )).collect();
+        assert_eq!(4,v1.len());
+        let keys1:Vec<Value>=v1.iter().map(|t|t.0.clone()).collect();
+        assert_eq!(true, keys1.contains(&Value::from(1)));
+        assert_eq!(true, keys1.contains(&Value::from(2)));
+        assert_eq!(true, keys1.contains(&Value::from(3)));
+        assert_eq!(true, keys1.contains(&Value::from(4)));
+        assert_eq!(4,v1.iter().filter(|(k,v)| {
+            if let Some(m) = v.as_object() {
+                if k==&Value::from(1) || k==&Value::from(2) {
+                    assert_eq!(Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),m.get("description"));
+                } else {
+                    assert_eq!(Some(&Value::from("Sweet and savory sauces, relishes, spreads, and seasonings")),m.get("description"));
+                }
+                return true;
+            }
+            return false;
+        }).count());
+        
+
+    }
+    RocksDBEQL::destroy(path)?;
+    Ok(())
+}
+
+
+
+#[test]
+fn test_hash() -> Result<()>{
+    let path = "test_hash.db";
+    {
+        let mut eql=RocksDBEQL::open(path)?;
+        write_data(&mut eql)?;
+        let v1:Vec<(Value,Value)>=eql.execute(
+            Operation::hash_lookup(Operation::scan("categories"), 
+                |(k,_v)| k.clone(), 
+                Operation::scan("products"), 
+                |(_k,v)| v.as_object().unwrap().get("category_id").unwrap().clone(), 
+                |(o,(k,mut v))| o.map(|(_k1,v1)| {
+                    if let Some (d) = v1.as_object().map(|o| o.get("description")).flatten(){
+                        v.as_object_mut().unwrap().insert(String::from("description"),d.clone());
+                    } 
+                    (k,v)
+                })
+        )).collect();
+        assert_eq!(4,v1.len());
+        let keys1:Vec<Value>=v1.iter().map(|t|t.0.clone()).collect();
+        assert_eq!(true, keys1.contains(&Value::from(1)));
+        assert_eq!(true, keys1.contains(&Value::from(2)));
+        assert_eq!(true, keys1.contains(&Value::from(3)));
+        assert_eq!(true, keys1.contains(&Value::from(4)));
+        assert_eq!(4,v1.iter().filter(|(k,v)| {
+            if let Some(m) = v.as_object() {
+                if k==&Value::from(1) || k==&Value::from(2) {
+                    assert_eq!(Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),m.get("description"));
+                } else {
+                    assert_eq!(Some(&Value::from("Sweet and savory sauces, relishes, spreads, and seasonings")),m.get("description"));
+                }
+                return true;
+            }
+            return false;
+        }).count());
+    }
+    RocksDBEQL::destroy( path)?;
+    Ok(())
+}
+    

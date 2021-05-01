@@ -38,6 +38,13 @@ pub enum Operation {
     NestedLoops {
         first: Box<Operation>,
         second: Box<dyn Fn((&Value,&Value)) -> Operation>,
+    },
+    HashLookup {
+        build: Box<Operation>,
+        build_hash: Box<dyn Fn((&Value,&Value)) -> Value>,
+        probe: Box<Operation>,
+        probe_hash: Box<dyn Fn((&Value,&Value)) -> Value>,
+        join: Box<dyn Fn((Option<(&Value,&Value)>,(Value,Value))) -> Option<(Value,Value)>>,
     }
 }
 
@@ -77,6 +84,13 @@ impl Operation {
     pub fn nested_loops<F>(first: Operation, second: F) -> Self 
         where F: Fn((&Value,&Value)) -> Operation + 'static {
         Operation::NestedLoops {first:Box::new(first),second:Box::new(second)}
+    }
+
+    pub fn hash_lookup<F1,F2,F3>(build: Operation, build_hash: F1, probe: Operation, probe_hash: F2, join: F3) -> Self 
+        where F1: Fn((&Value,&Value)) -> Value+ 'static, F2: Fn((&Value,&Value)) -> Value + 'static,
+                F3: Fn((Option<(&Value,&Value)>,(Value,Value))) -> Option<(Value,Value)> + 'static  {
+        Operation::HashLookup{build:Box::new(build),build_hash:Box::new(build_hash),probe:Box::new(probe)
+                , probe_hash:Box::new(probe_hash), join: Box::new(join)}
     }
 }
 
@@ -384,6 +398,15 @@ impl RocksDBEQL {
                     self.execute(*first)
                         .flat_map(move |(k1, v1)| self.execute(second((&k1,&v1))).map(move |(k2,v2)| (k2,v2))),
                 );
+            },
+            Operation::HashLookup{build,build_hash,probe,probe_hash,join} => {
+                let map:HashMap<String,(Value,Value)> = 
+                    self.execute(*build).map(|(k,v)| (format!("{}",build_hash((&k,&v))),(k,v))).collect();
+                return Box::new(self.execute(*probe)
+                    .flat_map(move |(k,v)| {
+                        let hash = format!("{}",probe_hash((&k,&v)));
+                        join((map.get(&hash).map(|(k1,v1)| (k1,v1)),(k,v)))
+                    }))
             }
         }
         Box::new(iter::empty::<(Value, Value)>())
