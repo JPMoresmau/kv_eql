@@ -37,62 +37,62 @@ pub enum Operation {
     },
     NestedLoops {
         first: Box<Operation>,
-        second: Box<dyn Fn((&Value,&Value)) -> Operation>,
+        second: Box<dyn Fn(&EQLRecord) -> Operation>,
     },
     HashLookup {
         build: Box<Operation>,
-        build_hash: Box<dyn Fn(&(Value,Value)) -> Option<Value>>,
+        build_hash: Box<dyn Fn(&EQLRecord) -> Option<Value>>,
         probe: Box<Operation>,
-        probe_hash: Box<dyn Fn(&(Value,Value)) -> Option<Value>>,
-        join: Box<dyn Fn((Option<&(Value,Value)>,(Value,Value))) -> Option<(Value,Value)>>,
+        probe_hash: Box<dyn Fn(&EQLRecord) -> Option<Value>>,
+        join: Box<dyn Fn((Option<&EQLRecord>,EQLRecord)) -> Option<EQLRecord>>,
     }
 }
 
-impl Operation {
-    pub fn scan<N: Into<String>>(name: N) -> Self {
-        Operation::Scan { name: name.into() }
-    }
 
-    pub fn key_lookup<N: Into<String>>(name: N, key: Value) -> Self {
-        Operation::KeyLookup { name: name.into(),key }
-    }
+pub fn scan<N: Into<String>>(name: N) -> Operation {
+    Operation::Scan { name: name.into() }
+}
 
-    pub fn extract(extract: &[&str], operation: Operation) -> Self {
-        let mut hs = HashSet::new();
-        for e in extract.iter() {
-            hs.insert((*e).into());
-        }
-        Operation::Extract {
-            names: hs,
-            operation: Box::new(operation),
-        }
-    }
+pub fn key_lookup<N: Into<String>>(name: N, key: Value) -> Operation {
+    Operation::KeyLookup { name: name.into(),key }
+}
 
-    pub fn augment(value: Value, operation: Operation) -> Self {
-        Operation::Augment{value, operation: Box::new(operation),}
+pub fn extract(extract: &[&str], operation: Operation) -> Operation {
+    let mut hs = HashSet::new();
+    for e in extract.iter() {
+        hs.insert((*e).into());
     }
-
-    pub fn index_lookup<N: Into<String>,IN: Into<String>>(name: N, index_name:IN, values: Vec<Value>) -> Self {
-        Operation::IndexLookup{name:name.into(), index_name:index_name.into(), values, keys:vec![]}
-    }
-
-    pub fn index_lookup_keys<N: Into<String>,IN: Into<String>,OT: AsRef<str>>(name: N, index_name:IN, values: Vec<Value>,
-        keys: Vec<OT>,) -> Self {
-        Operation::IndexLookup{name:name.into(), index_name:index_name.into(), values, keys:keys.iter().map(|s| String::from(s.as_ref())).collect()}
-    }
-
-    pub fn nested_loops<F>(first: Operation, second: F) -> Self 
-        where F: Fn((&Value,&Value)) -> Operation + 'static {
-        Operation::NestedLoops {first:Box::new(first),second:Box::new(second)}
-    }
-
-    pub fn hash_lookup<F1,F2,F3>(build: Operation, build_hash: F1, probe: Operation, probe_hash: F2, join: F3) -> Self 
-        where F1: Fn(&(Value,Value)) -> Option<Value>+ 'static, F2: Fn(&(Value,Value)) -> Option<Value> + 'static,
-                F3: Fn((Option<&(Value,Value)>,(Value,Value))) -> Option<(Value,Value)> + 'static  {
-        Operation::HashLookup{build:Box::new(build),build_hash:Box::new(build_hash),probe:Box::new(probe)
-                , probe_hash:Box::new(probe_hash), join: Box::new(join)}
+    Operation::Extract {
+        names: hs,
+        operation: Box::new(operation),
     }
 }
+
+pub fn augment(value: Value, operation: Operation) -> Operation {
+    Operation::Augment{value, operation: Box::new(operation),}
+}
+
+pub fn index_lookup<N: Into<String>,IN: Into<String>>(name: N, index_name:IN, values: Vec<Value>) -> Operation {
+    Operation::IndexLookup{name:name.into(), index_name:index_name.into(), values, keys:vec![]}
+}
+
+pub fn index_lookup_keys<N: Into<String>,IN: Into<String>,OT: AsRef<str>>(name: N, index_name:IN, values: Vec<Value>,
+    keys: Vec<OT>,) -> Operation {
+    Operation::IndexLookup{name:name.into(), index_name:index_name.into(), values, keys:keys.iter().map(|s| String::from(s.as_ref())).collect()}
+}
+
+pub fn nested_loops<F>(first: Operation, second: F) -> Operation 
+    where F: Fn(&EQLRecord) -> Operation + 'static {
+    Operation::NestedLoops {first:Box::new(first),second:Box::new(second)}
+}
+
+pub fn hash_lookup<F1,F2,F3>(build: Operation, build_hash: F1, probe: Operation, probe_hash: F2, join: F3) -> Operation 
+    where F1: Fn(&EQLRecord) -> Option<Value>+ 'static, F2: Fn(&EQLRecord) -> Option<Value> + 'static,
+            F3: Fn((Option<&EQLRecord>,EQLRecord)) -> Option<EQLRecord> + 'static  {
+    Operation::HashLookup{build:Box::new(build),build_hash:Box::new(build_hash),probe:Box::new(probe)
+            , probe_hash:Box::new(probe_hash), join: Box::new(join)}
+}
+
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -100,10 +100,19 @@ pub struct Metadata {
     pub indices: HashMap<String, HashMap<String, Vec<String>>>,
 }
 
-pub struct RocksDBEQL {
-    pub db: DB,
-    metadata_path: PathBuf,
-    pub metadata: Metadata,
+
+#[derive(Debug)]
+pub struct EQLRecord {
+    pub key: Value,
+    pub value: Value,
+}
+
+impl EQLRecord {
+    pub fn new(
+        key: Value,
+        value: Value) -> Self {
+            EQLRecord{key,value}
+        }
 }
 
 #[derive(Error, Debug)]
@@ -115,7 +124,19 @@ pub enum MetadataError {
     },
 }
 
-impl RocksDBEQL {
+#[derive(Default)]
+pub struct EQLBatch {
+    batch: WriteBatch,
+}
+
+pub struct EQLDB {
+    db: DB,
+    metadata_path: PathBuf,
+    pub metadata: Metadata,
+}
+
+
+impl EQLDB {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mdp = path.as_ref().join("metadata.json");
         let metadata = if mdp.is_file() {
@@ -144,7 +165,7 @@ impl RocksDBEQL {
         db_opts.create_if_missing(true);
 
         let db = DB::open_cf_descriptors(&db_opts, path, cfs).unwrap();
-        Ok(RocksDBEQL {
+        Ok(EQLDB {
             db,
             metadata_path: mdp,
             metadata,
@@ -190,10 +211,10 @@ impl RocksDBEQL {
 
         self.save_metadata()?;
 
-        self.execute(Operation::scan(rec_type.as_ref()))
-            .try_fold(WriteBatch::default(), |mut b, (k, v)| {
-                let kv=serde_json::to_vec(&k).unwrap();
-                let ix_key = index_key(&on, &kv, &v);
+        self.execute(scan(rec_type.as_ref()))
+            .try_fold(WriteBatch::default(), |mut b, rec| {
+                let kv=serde_json::to_vec(&rec.key).unwrap();
+                let ix_key = index_key(&on, &kv, &rec.value);
                 
                 b.put_cf(cf1, ix_key, &kv);
                 if b.len()>1000 {
@@ -238,15 +259,15 @@ impl RocksDBEQL {
         key: V,
         value: &Value,
     ) -> Result<()> {
-        let mut batch=WriteBatch::default();
+        let mut batch=EQLBatch::default();
         self.batch_insert(&mut batch,rec_type, key,value)?;
-        self.db.write(batch)?;
+        self.db.write(batch.batch)?;
         Ok(())
     }
 
     pub fn batch_insert<T: AsRef<str>, V: Into<Value>>(
         &mut self,
-        batch: &mut WriteBatch,
+        batch: &mut EQLBatch,
         rec_type: T,
         key: V,
         value: &Value,
@@ -262,14 +283,14 @@ impl RocksDBEQL {
             Some(cf1) => cf1,
         };
         let kv = serde_json::to_vec(&key.into()).unwrap();
-        batch.put_cf(cf, kv.clone(), serde_json::to_vec(value).unwrap());
+        batch.batch.put_cf(cf, kv.clone(), serde_json::to_vec(value).unwrap());
 
         if let Some(idxs) = self.metadata.indices.get(ref_type) {
             for (idx_name, on) in idxs.iter() {
                 let idx_cf = index_cf_name(rec_type.as_ref(), idx_name);
                 if let Some(cf1) = self.db.cf_handle(&idx_cf){
                     let ix_key = index_key(on, &kv, value);
-                    batch.put_cf(cf1, ix_key, kv.clone());
+                    batch.batch.put_cf(cf1, ix_key, kv.clone());
                 }
             }
         } else {
@@ -299,13 +320,13 @@ impl RocksDBEQL {
     }
 
     pub fn delete<T: AsRef<str>, V: Into<Value>>(&mut self, rec_type: T, key: V) -> Result<()> {
-        let mut batch=WriteBatch::default();
+        let mut batch=EQLBatch::default();
         self.batch_delete(&mut batch,rec_type, key)?;
-        self.db.write(batch)?;
+        self.db.write(batch.batch)?;
         Ok(())
     }
 
-    pub fn batch_delete<T: AsRef<str>, V: Into<Value>>(&mut self,batch: &mut WriteBatch, rec_type: T, key: V) -> Result<()> {
+    pub fn batch_delete<T: AsRef<str>, V: Into<Value>>(&mut self,batch: &mut EQLBatch, rec_type: T, key: V) -> Result<()> {
         let ref_type = rec_type.as_ref();
         let ocf1 = self.db.cf_handle(ref_type);
         if let Some(cf1) = ocf1 {
@@ -320,21 +341,26 @@ impl RocksDBEQL {
                             let idx_cf = index_cf_name(rec_type.as_ref(), idx_name);
                             if let Some(cf) = self.db.cf_handle(&idx_cf){
                                 let ix_key = index_key(on, &kv, &value);
-                                batch.delete_cf(cf, ix_key);
+                                batch.batch.delete_cf(cf, ix_key);
                             }
                         }
                     }
                 }
             }
-            batch.delete_cf(cf1, kv);
+            batch.batch.delete_cf(cf1, kv);
         }
+        Ok(())
+    }
+
+    pub fn write(&self, batch: EQLBatch) -> Result<()> {
+        self.db.write(batch.batch)?;
         Ok(())
     }
 
     pub fn execute(
         &self,
         operation: Operation,
-    ) -> Box<dyn Iterator<Item = (Value, Value)> + '_> {
+    ) -> Box<dyn Iterator<Item =EQLRecord> + '_> {
         match operation {
             Operation::Scan { name } => {
                 let ocf1 = self.db.cf_handle(&name);
@@ -342,14 +368,15 @@ impl RocksDBEQL {
                     let it = self
                         .db
                         .iterator_cf(cf1, IteratorMode::Start)
-                        .map(|(k, v)| (serde_json::from_slice::<Value>(&k).unwrap(), serde_json::from_slice::<Value>(&v).unwrap()));
+                        .map(|(k, v)| EQLRecord::new(serde_json::from_slice::<Value>(&k).unwrap(), serde_json::from_slice::<Value>(&v).unwrap()));
                     return Box::new(it);
                 }
             },
             Operation::KeyLookup{name, key} => {
                 let ocf1 = self.db.cf_handle(&name);
                 if let Some(cf1) = ocf1 {
-                    let v=self.db.get_cf(cf1, &serde_json::to_vec(&key).unwrap()).unwrap().map(|v| (key, serde_json::from_slice::<Value>(&v).unwrap()));
+                    let rk=serde_json::to_vec(&key).unwrap();
+                    let v=self.db.get_cf(cf1, &rk).unwrap().map(|v| EQLRecord::new(key, serde_json::from_slice::<Value>(&v).unwrap()));
                     return Box::new(v.into_iter());
                 }
             },
@@ -359,7 +386,7 @@ impl RocksDBEQL {
             } => {
                 return Box::new(
                     self.execute(*b_op)
-                        .map(move |(k, v)| (k, extract_from_value(v, &names))),
+                        .map(move |rec| EQLRecord{value:extract_from_value(rec.value, &names),..rec}),
                 );
             },
             Operation::Augment{
@@ -368,7 +395,7 @@ impl RocksDBEQL {
             } => {
                 return Box::new(
                     self.execute(*b_op)
-                        .map(move |(k, v)| (k, merge_values(&value, v))),
+                        .map(move |rec| EQLRecord{value:merge_values(&value, rec.value),..rec}),
                 );
             },
             Operation::IndexLookup {
@@ -378,7 +405,7 @@ impl RocksDBEQL {
                 if let Some(cf) = self.db.cf_handle(&idx_cf) {
                     if values.is_empty(){
                         let it=self.db.iterator_cf(cf,IteratorMode::Start)
-                            .map(move |(k, v)| (serde_json::from_slice(&v).unwrap(),extract_from_index_key(&k, &keys)));
+                            .map(move |(k, v)| EQLRecord::new(serde_json::from_slice(&v).unwrap(),extract_from_index_key(&k, &keys)));
                         return Box::new(it);
                     } else {
                         let mut v = vec![];
@@ -394,7 +421,7 @@ impl RocksDBEQL {
                         opts.set_iterate_upper_bound(u);
                         let mode = IteratorMode::From(&v.as_ref(), Direction::Forward);
                         let it=self.db.iterator_cf_opt(cf, opts,mode)
-                            .map(move |(k, v)| (serde_json::from_slice(&v).unwrap(),extract_from_index_key(&k, &keys)));
+                            .map(move |(k, v)| EQLRecord::new(serde_json::from_slice(&v).unwrap(),extract_from_index_key(&k, &keys)));
                         return Box::new(it);
                     }
                 }
@@ -402,22 +429,22 @@ impl RocksDBEQL {
             Operation::NestedLoops{first,second} => {
                 return Box::new(
                     self.execute(*first)
-                        .flat_map(move |(k1, v1)| self.execute(second((&k1,&v1))).map(move |(k2,v2)| (k2,v2))),
+                        .flat_map(move |rec| self.execute(second(&rec))),
                 );
             },
             Operation::HashLookup{build,build_hash,probe,probe_hash,join} => {
-                let map:HashMap<String,(Value,Value)> = 
-                    self.execute(*build).flat_map(|kv| build_hash(&kv).map(|s| (format!("{}",s),kv))).collect();
+                let map:HashMap<String,EQLRecord> = 
+                    self.execute(*build).flat_map(|rec| build_hash(&rec).map(|s| (format!("{}",s),rec))).collect();
                 return Box::new(self.execute(*probe)
-                    .flat_map(move |kv| {
-                       probe_hash(&kv).map(|h| {
+                    .flat_map(move |rec| {
+                       probe_hash(&rec).map(|h| {
                             let hash = format!("{}",h);
-                            join((map.get(&hash),kv))
+                            join((map.get(&hash),rec))
                         }).flatten()
                     }))
             }
         }
-        Box::new(iter::empty::<(Value, Value)>())
+        Box::new(iter::empty::<EQLRecord>())
     }
 }
 
