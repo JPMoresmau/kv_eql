@@ -45,6 +45,13 @@ pub enum Operation {
         probe: Box<Operation>,
         probe_hash: Box<dyn Fn(&EQLRecord) -> Option<Value>>,
         join: Box<dyn Fn((Option<&EQLRecord>,EQLRecord)) -> Option<EQLRecord>>,
+    },
+    Merge {
+        first: Box<Operation>,
+        first_key: Box<dyn Fn(&EQLRecord) -> Vec<Value>>,
+        second: Box<Operation>,
+        second_key: Box<dyn Fn(&EQLRecord) -> Vec<Value>>,
+        join: Box<dyn Fn((Option<&EQLRecord>,Option<&EQLRecord>)) -> Option<EQLRecord>>,
     }
 }
 
@@ -93,7 +100,11 @@ pub fn hash_lookup<F1,F2,F3>(build: Operation, build_hash: F1, probe: Operation,
             , probe_hash:Box::new(probe_hash), join: Box::new(join)}
 }
 
-
+pub fn merge<F1,F2,F3>(first: Operation, first_key: F1, second: Operation, second_key: F2, join: F3) -> Operation 
+    where F1: Fn(&EQLRecord) -> Vec<Value> + 'static, F2: Fn(&EQLRecord) -> Vec<Value> + 'static,
+        F3:Fn((Option<&EQLRecord>,Option<&EQLRecord>)) -> Option<EQLRecord> + 'static {
+        Operation::Merge{first:Box::new(first), first_key:Box::new(first_key), second:Box::new(second), second_key:Box::new(second_key), join:Box::new(join)}
+    }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Metadata {
@@ -101,7 +112,7 @@ pub struct Metadata {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EQLRecord {
     pub key: Value,
     pub value: Value,
@@ -441,8 +452,54 @@ impl EQLDB {
                             let hash = format!("{}",h);
                             join((map.get(&hash),rec))
                         }).flatten()
-                    }))
-            }
+                    }));
+            },
+            Operation::Merge{first,first_key,second,second_key,join} => {
+                let mut it1=self.execute(*first).peekable();
+                let mut it2=self.execute(*second).peekable();
+                let mut v = vec![];
+                let mut orec1 = it1.next();
+                let mut orec2= it2.next();
+                while orec1.is_some() || orec2.is_some() {
+                    if let Some(rec1) = &orec1 {
+                        if let Some(rec2) = &orec2 {
+                            let k1=values_key(&first_key(rec1));
+                            let k2=values_key(&second_key(rec2));
+                            if k1<k2 {
+                                if let Some(rec3) = join((Some(rec1),None)){
+                                    v.push(rec3);
+                                }
+                                orec1=it1.next();
+                            } else if k2<k1 {
+                                if let Some(rec3) = join((None,Some(rec2))){
+                                    v.push(rec3);
+                                }
+                                orec2=it2.next();
+                            } else {
+                                if let Some(rec3) = join((Some(rec1),Some(rec2))){
+                                    v.push(rec3);
+                                }
+                                orec2=it2.next();
+                            }
+                        } else {
+                            if let Some(rec3) = join((Some(rec1),None)){
+                                v.push(rec3);
+                            }
+                            orec1=it1.next();
+                        }
+                    } else {
+                        if let Some(rec2) = &orec2 {
+                            if let Some(rec3) = join((None,Some(rec2))){
+                                v.push(rec3);
+                            }
+                            orec2=it2.next();
+                        }
+                    }
+                }
+                return Box::new(
+                   v.into_iter()
+                );
+            },
         }
         Box::new(iter::empty::<EQLRecord>())
     }
@@ -506,6 +563,15 @@ fn index_key<T: AsRef<str>, K: AsRef<[u8]>>(on: &[T], key: &K, value: &Value) ->
     }
     for k in key.as_ref() {
         v.push(*k);
+    }
+    v
+}
+
+fn values_key(values: &[Value]) -> Vec<u8> {
+    let mut v = vec![];
+    for v2 in values {
+        v.append(&mut serde_json::to_vec(v2).unwrap());
+        v.push(0);
     }
     v
 }
