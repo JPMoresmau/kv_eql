@@ -14,7 +14,7 @@
  # Examples
 
  ## Connect and operate on data
- ```
+ ```rust
  use kv_eql::*;
  use serde_json::json;
 
@@ -41,16 +41,13 @@
      assert_eq!(ov, None);
  }
  EQLDB::destroy(path)?;
- Ok::<(), anyhow::Error>(())
  ```
  
  ## Queries
  In the standard sample Northwind database, there are categories and products. Each product belongs to a category. Suppose you want to list all products
  and add to them the description of their categories. One way to do it would be to scan the categories table, only keep the description, then for each category
  lookup all products for this category and add the description. This is how you would write this in EQL:
- ```no_run
- # use kv_eql::*;
- # let eql = EQLDB::open("")?;
+ ```rust
  eql
  .execute(nested_loops(
     extract(&["description"], scan("categories")),
@@ -64,14 +61,11 @@
         )
     },
 ));
- # Ok::<(), anyhow::Error>(())
  ```
  We scan the categories, extract the description field, and perform a nested loop: for each category, we do an index lookup, retrieve the product and augment 
  the product value with the description
  In this example, it would probably be faster to scan both categories and products since we want all products, and do a hash join
- ```no_run
- # use kv_eql::*;
- # let eql = EQLDB::open("")?;
+ ```rust
  eql.execute(hash_lookup(
     scan("categories"),
     RecordExtract::Key,
@@ -86,6 +80,5 @@
         })
     },
     ));
- # Ok::<(), anyhow::Error>(())
  ```
  
