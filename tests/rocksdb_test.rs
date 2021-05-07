@@ -547,11 +547,7 @@ fn test_hash() -> Result<()> {
                 |(o, mut rec)| {
                     o.map(|rec1| {
                         if let Some(d) = rec1
-                            .value
-                            .as_object()
-                            .map(|o| o.get("description"))
-                            .flatten()
-                        {
+                            .value.pointer("/description"){
                             rec.value
                                 .as_object_mut()
                                 .unwrap()
@@ -620,11 +616,7 @@ fn test_merge() -> Result<()> {
                             orec2.map(|rec2| {
                                 let mut rec3 = rec2.clone();
                                 if let Some(d) = rec1
-                                    .value
-                                    .as_object()
-                                    .map(|o| o.get("description"))
-                                    .flatten()
-                                {
+                                    .value.pointer("/description") {
                                     rec3.value
                                         .as_object_mut()
                                         .unwrap()

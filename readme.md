@@ -73,7 +73,7 @@
     RecordExtract::pointer("/category_id"),
     |(o, mut rec)| {
         o.map(|rec1| {
-            if let Some(d) = rec1.value.as_object().map(|o| o.get("description")).flatten(){
+            if let Some(d) = rec1.value.pointer("/description"){
                 rec.value.as_object_mut().unwrap().insert(String::from("description"), d.clone());
             }
             rec
