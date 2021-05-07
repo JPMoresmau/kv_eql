@@ -1,14 +1,14 @@
-use serde_json::json;
-use kv_eql::{EQLDB, EQLRecord, EQLBatch, hash_lookup, scan, index_lookup, index_lookup_keys, nested_loops, extract, augment, key_lookup, merge};
-use serde_json::Value;
 use anyhow::Result;
+use kv_eql::{EQLBatch, EQLDB, EQLRecord, RecordExtract, augment, extract, hash_lookup, index_lookup, index_lookup_keys, key_lookup, merge, nested_loops, scan};
+use serde_json::json;
+use serde_json::Value;
 
 #[test]
-fn test_basic() -> Result<()>{
+fn test_basic() -> Result<()> {
     let path = "test_basic.db";
     {
-        let mut eql=EQLDB::open(path)?;
-        let md=&eql.metadata;
+        let mut eql = EQLDB::open(path)?;
+        let md = &eql.metadata;
         assert_eq!(true, md.indices.is_empty());
 
         let john = json!({
@@ -19,39 +19,39 @@ fn test_basic() -> Result<()>{
                 "+44 2345678"
             ]
         });
-        
+
         eql.insert("type1", "key1", &john)?;
-        let md=&eql.metadata;
+        let md = &eql.metadata;
         assert_eq!(true, md.indices.contains_key("type1"));
-        let m2=md.indices.get("type1").unwrap();
+        let m2 = md.indices.get("type1").unwrap();
         assert_eq!(true, m2.is_empty());
-        
-        let ov=eql.get("type1", "key1")?;
-        assert_eq!(ov,Some(john));
+
+        let ov = eql.get("type1", "key1")?;
+        assert_eq!(ov, Some(john));
 
         eql.delete("type1", "key1")?;
-        let ov=eql.get("type1", "key1")?;
-        assert_eq!(ov,None);
+        let ov = eql.get("type1", "key1")?;
+        assert_eq!(ov, None);
     }
     {
-        let mut eql=EQLDB::open(path)?;
-        let ov=eql.get("type1", "key1")?;
-        assert_eq!(ov,None);
+        let mut eql = EQLDB::open(path)?;
+        let ov = eql.get("type1", "key1")?;
+        assert_eq!(ov, None);
     }
-    EQLDB::destroy( path)?;
+    EQLDB::destroy(path)?;
     Ok(())
 }
 
 #[test]
-fn test_scan() -> Result<()>{
+fn test_scan() -> Result<()> {
     let path = "test_scan.db";
     {
-        let mut meta=EQLDB::open(path)?;
+        let mut meta = EQLDB::open(path)?;
         let mary = json!({
             "name": "Mary Doe",
             "age": 34
         });
-        
+
         meta.insert("type1", "key2", &mary)?;
 
         let john = json!({
@@ -62,19 +62,17 @@ fn test_scan() -> Result<()>{
                 "+44 2345678"
             ]
         });
-        
+
         meta.insert("type1", "key1", &john)?;
 
-
-
         //let v1=vec![(b"key1",&john),(b"key2",&mary)];
-        let v1:Vec<EQLRecord>=meta.execute(scan("type1")).collect();
-        assert_eq!(2,v1.len());
-        assert_eq!(Value::from("key1"),v1[0].key);
-        assert_eq!(Value::from("key2"),v1[1].key);
-        assert_eq!(john,v1[0].value);
-        assert_eq!(mary,v1[1].value);
-        
+        let v1: Vec<EQLRecord> = meta.execute(scan("type1")).collect();
+        assert_eq!(2, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(Value::from("key2"), v1[1].key);
+        assert_eq!(john, v1[0].value);
+        assert_eq!(mary, v1[1].value);
+
         let john2 = json!({
             "name": "John Doe",
             "phones": [
@@ -82,28 +80,29 @@ fn test_scan() -> Result<()>{
                 "+44 2345678"
             ]
         });
-       
+
         let mary2 = json!({
             "name": "Mary Doe",
         });
 
-        let v1:Vec<EQLRecord>=meta.execute(extract(&["name","phones"],scan("type1"))).collect();
-        assert_eq!(2,v1.len());
-        assert_eq!(Value::from("key1"),v1[0].key);
-        assert_eq!(Value::from("key2"),v1[1].key);
-        assert_eq!(john2,v1[0].value);
-        assert_eq!(mary2,v1[1].value);
-
+        let v1: Vec<EQLRecord> = meta
+            .execute(extract(&["name", "phones"], scan("type1")))
+            .collect();
+        assert_eq!(2, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(Value::from("key2"), v1[1].key);
+        assert_eq!(john2, v1[0].value);
+        assert_eq!(mary2, v1[1].value);
     }
-    EQLDB::destroy( path)?;
+    EQLDB::destroy(path)?;
     Ok(())
 }
 
 #[test]
-fn test_lookup() -> Result<()>{
+fn test_lookup() -> Result<()> {
     let path = "test_lookup.db";
     {
-        let mut meta=EQLDB::open(path)?;
+        let mut meta = EQLDB::open(path)?;
         let john = json!({
             "name": "John Doe",
             "age": 43,
@@ -112,33 +111,39 @@ fn test_lookup() -> Result<()>{
                 "+44 2345678"
             ]
         });
-        
+
         meta.insert("type1", "key1", &john)?;
 
         let mary = json!({
             "name": "Mary Doe",
             "age": 34
         });
-        
+
         meta.insert("type1", "key2", &mary)?;
 
         //let v1=vec![(b"key1",&john),(b"key2",&mary)];
-         let v1:Vec<EQLRecord>=meta.execute(key_lookup("type1",Value::from("key1"))).collect();
-        assert_eq!(1,v1.len());
-        assert_eq!(Value::from("key1"),v1[0].key);
-        assert_eq!(john,v1[0].value);
-      
+        let v1: Vec<EQLRecord> = meta
+            .execute(key_lookup("type1", Value::from("key1")))
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(john, v1[0].value);
+
         let mary2 = json!({
             "name": "Mary Doe",
         });
 
-        let v1:Vec<EQLRecord>=meta.execute(extract(&["name","phones"],key_lookup("type1",Value::from("key2")))).collect();
-        assert_eq!(1,v1.len());
-        assert_eq!(Value::from("key2"),v1[0].key);
-        assert_eq!(mary2,v1[0].value);
-
+        let v1: Vec<EQLRecord> = meta
+            .execute(extract(
+                &["name", "phones"],
+                key_lookup("type1", Value::from("key2")),
+            ))
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::from("key2"), v1[0].key);
+        assert_eq!(mary2, v1[0].value);
     }
-    EQLDB::destroy( path)?;
+    EQLDB::destroy(path)?;
     Ok(())
 }
 
@@ -146,36 +151,36 @@ fn test_lookup() -> Result<()>{
 fn test_index_metadata() -> Result<()> {
     let path = "test_index_metadata.db";
     {
-        let mut eql=EQLDB::open(path)?;
+        let mut eql = EQLDB::open(path)?;
         eql.add_index("type1", "idx1", vec!["/name"])?;
-        let md=&eql.metadata;
+        let md = &eql.metadata;
         assert_eq!(true, md.indices.contains_key("type1"));
-        let m2=md.indices.get("type1").unwrap();
+        let m2 = md.indices.get("type1").unwrap();
         assert_eq!(true, m2.contains_key("idx1"));
-        let on=m2.get("idx1").unwrap();
-        assert_eq!(1,on.len());
-        assert_eq!("/name",on[0]);
+        let on = m2.get("idx1").unwrap();
+        assert_eq!(1, on.len());
+        assert_eq!("/name", on[0]);
     }
     {
-        let mut eql=EQLDB::open(path)?;
-        let md=&eql.metadata;
+        let mut eql = EQLDB::open(path)?;
+        let md = &eql.metadata;
         assert_eq!(true, md.indices.contains_key("type1"));
-        let m2=md.indices.get("type1").unwrap();
+        let m2 = md.indices.get("type1").unwrap();
         assert_eq!(true, m2.contains_key("idx1"));
-        let on=m2.get("idx1").unwrap();
-        assert_eq!(1,on.len());
-        assert_eq!("/name",on[0]);
+        let on = m2.get("idx1").unwrap();
+        assert_eq!(1, on.len());
+        assert_eq!("/name", on[0]);
         eql.delete_index("type1", "idx1")?;
-        let md=&eql.metadata;
+        let md = &eql.metadata;
         assert_eq!(true, md.indices.contains_key("type1"));
-        let m2=md.indices.get("type1").unwrap();
+        let m2 = md.indices.get("type1").unwrap();
         assert_eq!(true, m2.is_empty());
     }
     {
-        let eql=EQLDB::open(path)?;
-        let md=eql.metadata;
+        let eql = EQLDB::open(path)?;
+        let md = eql.metadata;
         assert_eq!(true, md.indices.contains_key("type1"));
-        let m2=md.indices.get("type1").unwrap();
+        let m2 = md.indices.get("type1").unwrap();
         assert_eq!(true, m2.is_empty());
     }
     EQLDB::destroy(path)?;
@@ -186,8 +191,8 @@ fn test_index_metadata() -> Result<()> {
 fn test_index_lookup() -> Result<()> {
     let path = "test_index_lookup.db";
     {
-        let mut eql=EQLDB::open(path)?;
-        eql.add_index("type1", "idx1", vec!["/name","/age"])?;
+        let mut eql = EQLDB::open(path)?;
+        eql.add_index("type1", "idx1", vec!["/name", "/age"])?;
         let john = json!({
             "name": "John Doe",
             "age": 43,
@@ -202,9 +207,8 @@ fn test_index_lookup() -> Result<()> {
             "name": "Mary Doe",
             "age": 34
         });
-        
-        eql.insert("type1", "key2", &mary)?;
 
+        eql.insert("type1", "key2", &mary)?;
 
         let john2 = json!({
             "nameix": "John Doe",
@@ -219,55 +223,109 @@ fn test_index_lookup() -> Result<()> {
             "ageix": 34,
         });
 
+        let v1: Vec<EQLRecord> = eql
+            .execute(index_lookup_keys(
+                "type1",
+                "idx1",
+                vec![json!("John Doe")],
+                vec!["nameix", "ageix"],
+            ))
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(john2, v1[0].value);
 
-        let v1:Vec<EQLRecord>=eql.execute(index_lookup_keys("type1","idx1",vec![json!("John Doe")], vec!["nameix","ageix"])).collect();
-        assert_eq!(1,v1.len());
-        assert_eq!(Value::from("key1"),v1[0].key);
-        assert_eq!(john2,v1[0].value);
+        let v1: Vec<EQLRecord> = eql
+            .execute(index_lookup_keys(
+                "type1",
+                "idx1",
+                vec![json!("John Doe"), json!(43)],
+                vec!["nameix", "ageix"],
+            ))
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(john2, v1[0].value);
 
-        let v1:Vec<EQLRecord>=eql.execute(index_lookup_keys("type1","idx1",vec![json!("John Doe"),json!(43)], vec!["nameix","ageix"])).collect();
-        assert_eq!(1,v1.len());
-        assert_eq!(Value::from("key1"),v1[0].key);
-        assert_eq!(john2,v1[0].value);
-        
-        let v1:Vec<EQLRecord>=eql.execute(index_lookup_keys("type1","idx1",vec![json!("John Doe"),json!(34)], vec!["nameix","ageix"])).collect();
-        assert_eq!(0,v1.len());
+        let v1: Vec<EQLRecord> = eql
+            .execute(index_lookup_keys(
+                "type1",
+                "idx1",
+                vec![json!("John Doe"), json!(34)],
+                vec!["nameix", "ageix"],
+            ))
+            .collect();
+        assert_eq!(0, v1.len());
 
-        let v1:Vec<EQLRecord>=eql.execute(index_lookup_keys("type1","idx1",vec![json!("Mary Doe")], vec!["nameix","ageix"])).collect();
-        assert_eq!(1,v1.len());
-        assert_eq!(Value::from("key2"),v1[0].key);
-        assert_eq!(mary2,v1[0].value);
+        let v1: Vec<EQLRecord> = eql
+            .execute(index_lookup_keys(
+                "type1",
+                "idx1",
+                vec![json!("Mary Doe")],
+                vec!["nameix", "ageix"],
+            ))
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::from("key2"), v1[0].key);
+        assert_eq!(mary2, v1[0].value);
 
-        let v1:Vec<EQLRecord>=eql.execute(index_lookup_keys("type1","idx1",vec![json!("Mary Doe")], vec!["","ageix"])).collect();
-        assert_eq!(1,v1.len());
-        assert_eq!(Value::from("key2"),v1[0].key);
-        assert_eq!(mary3,v1[0].value);
+        let v1: Vec<EQLRecord> = eql
+            .execute(index_lookup_keys(
+                "type1",
+                "idx1",
+                vec![json!("Mary Doe")],
+                vec!["", "ageix"],
+            ))
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::from("key2"), v1[0].key);
+        assert_eq!(mary3, v1[0].value);
 
-        let v1:Vec<EQLRecord>=eql.execute(index_lookup_keys("type1","idx1",vec![json!("John Deer"),json!(43)], vec!["nameix","ageix"])).collect();
-        assert_eq!(0,v1.len());
+        let v1: Vec<EQLRecord> = eql
+            .execute(index_lookup_keys(
+                "type1",
+                "idx1",
+                vec![json!("John Deer"), json!(43)],
+                vec!["nameix", "ageix"],
+            ))
+            .collect();
+        assert_eq!(0, v1.len());
 
-        let v1:Vec<EQLRecord>=eql.execute(index_lookup_keys("type1","idx1",vec![], vec!["nameix","ageix"])).collect();
-        assert_eq!(2,v1.len());
-        assert_eq!(Value::from("key1"),v1[0].key);
-        assert_eq!(john2,v1[0].value);
-        assert_eq!(Value::from("key2"),v1[1].key);
-        assert_eq!(mary2,v1[1].value);
+        let v1: Vec<EQLRecord> = eql
+            .execute(index_lookup_keys(
+                "type1",
+                "idx1",
+                vec![],
+                vec!["nameix", "ageix"],
+            ))
+            .collect();
+        assert_eq!(2, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(john2, v1[0].value);
+        assert_eq!(Value::from("key2"), v1[1].key);
+        assert_eq!(mary2, v1[1].value);
 
         eql.delete("type1", "key1")?;
-        let v1:Vec<EQLRecord>=eql.execute(index_lookup_keys("type1","idx1",vec![json!("John Doe")], vec!["nameix","ageix"])).collect();
-        assert_eq!(0,v1.len());
+        let v1: Vec<EQLRecord> = eql
+            .execute(index_lookup_keys(
+                "type1",
+                "idx1",
+                vec![json!("John Doe")],
+                vec!["nameix", "ageix"],
+            ))
+            .collect();
+        assert_eq!(0, v1.len());
     }
     EQLDB::destroy(path)?;
     Ok(())
 }
 
-
 #[test]
 fn test_index_nested_loops() -> Result<()> {
     let path = "test_index_nested_loops.db";
     {
-        let mut eql=EQLDB::open(path)?;
-        eql.add_index("type1", "idx1", vec!["/name","/age"])?;
+        let mut eql = EQLDB::open(path)?;
+        eql.add_index("type1", "idx1", vec!["/name", "/age"])?;
         let john = json!({
             "name": "John Doe",
             "age": 43,
@@ -282,9 +340,8 @@ fn test_index_nested_loops() -> Result<()> {
             "name": "Mary Doe",
             "age": 34
         });
-        
-        eql.insert("type1", "key2", &mary)?;
 
+        eql.insert("type1", "key2", &mary)?;
 
         let john2 = json!({
             "name": "John Doe",
@@ -296,33 +353,35 @@ fn test_index_nested_loops() -> Result<()> {
             ]
         });
 
-        let v1:Vec<EQLRecord>=eql.execute(
-                nested_loops(
-                    index_lookup("type1","idx1",vec![json!("John Doe")]),
-                        |rec| key_lookup("type1",rec.key.clone())
-                )).collect();
-        assert_eq!(1,v1.len());
-        assert_eq!(Value::from("key1"),v1[0].key);
-        assert_eq!(john,v1[0].value);
+        let v1: Vec<EQLRecord> = eql
+            .execute(nested_loops(
+                index_lookup("type1", "idx1", vec![json!("John Doe")]),
+                |rec| key_lookup("type1", rec.key.clone()),
+            ))
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(john, v1[0].value);
 
-        let v1:Vec<EQLRecord>=eql.execute(
-            nested_loops(
-                index_lookup_keys("type1","idx1",vec![json!("John Doe")],vec!["","ageix"]),
-                    |rec| augment(rec.value.clone(), key_lookup("type1",rec.key.clone()))
-            )).collect();
-        assert_eq!(1,v1.len());
-        assert_eq!(Value::from("key1"),v1[0].key);
-        assert_eq!(john2,v1[0].value);
+        let v1: Vec<EQLRecord> = eql
+            .execute(nested_loops(
+                index_lookup_keys("type1", "idx1", vec![json!("John Doe")], vec!["", "ageix"]),
+                |rec| augment(rec.value.clone(), key_lookup("type1", rec.key.clone())),
+            ))
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(john2, v1[0].value);
     }
     EQLDB::destroy(path)?;
     Ok(())
 }
 
 #[test]
-fn test_batch() -> Result<()>{
+fn test_batch() -> Result<()> {
     let path = "test_batch.db";
     {
-        let mut eql=EQLDB::open(path)?;
+        let mut eql = EQLDB::open(path)?;
         let john = json!({
             "name": "John Doe",
             "age": 43,
@@ -331,7 +390,7 @@ fn test_batch() -> Result<()>{
                 "+44 2345678"
             ]
         });
-        let mut batch=EQLBatch::default();
+        let mut batch = EQLBatch::default();
 
         eql.batch_insert(&mut batch, "type1", "key1", &john)?;
 
@@ -339,78 +398,76 @@ fn test_batch() -> Result<()>{
             "name": "Mary Doe",
             "age": 34
         });
-        
-        eql.batch_insert(&mut batch,"type1", "key2", &mary)?;
 
-        let v1:Vec<EQLRecord>=eql.execute(extract(&["name","phones"],scan("type1"))).collect();
-        assert_eq!(0,v1.len());
+        eql.batch_insert(&mut batch, "type1", "key2", &mary)?;
+
+        let v1: Vec<EQLRecord> = eql
+            .execute(extract(&["name", "phones"], scan("type1")))
+            .collect();
+        assert_eq!(0, v1.len());
 
         eql.write(batch)?;
 
         //let v1=vec![(b"key1",&john),(b"key2",&mary)];
-        let v1:Vec<EQLRecord>=eql.execute(scan("type1")).collect();
-        assert_eq!(2,v1.len());
-        assert_eq!(Value::from("key1"),v1[0].key);
-        assert_eq!(Value::from("key2"),v1[1].key);
-        assert_eq!(john,v1[0].value);
-        assert_eq!(mary,v1[1].value);
+        let v1: Vec<EQLRecord> = eql.execute(scan("type1")).collect();
+        assert_eq!(2, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(Value::from("key2"), v1[1].key);
+        assert_eq!(john, v1[0].value);
+        assert_eq!(mary, v1[1].value);
 
-        let mut batch=EQLBatch::default();
+        let mut batch = EQLBatch::default();
 
         eql.batch_delete(&mut batch, "type1", "key1")?;
-        eql.batch_delete(&mut batch,"type1", "key2")?;
+        eql.batch_delete(&mut batch, "type1", "key2")?;
 
-        let v1:Vec<EQLRecord>=eql.execute(scan("type1")).collect();
-        assert_eq!(2,v1.len());
+        let v1: Vec<EQLRecord> = eql.execute(scan("type1")).collect();
+        assert_eq!(2, v1.len());
 
         eql.write(batch)?;
 
-        let v1:Vec<EQLRecord>=eql.execute(extract(&["name","phones"],scan("type1"))).collect();
-        assert_eq!(0,v1.len());
-       
+        let v1: Vec<EQLRecord> = eql
+            .execute(extract(&["name", "phones"], scan("type1")))
+            .collect();
+        assert_eq!(0, v1.len());
     }
-    EQLDB::destroy( path)?;
+    EQLDB::destroy(path)?;
     Ok(())
 }
 
-fn write_data(eql: &mut EQLDB) -> Result<()>{
-    let bevs=json!({
+fn write_northwind_data(eql: &mut EQLDB) -> Result<()> {
+    let bevs = json!({
         "category_name":"Beverages",
         "description":"Soft drinks, coffees, teas, beers, and ales",
     });
-    let conds=json!({
+    let conds = json!({
         "category_name":"Condiments",
         "description":"Sweet and savory sauces, relishes, spreads, and seasonings",
     });
     eql.insert("categories", 1, &bevs)?;
     eql.insert("categories", 2, &conds)?;
- 
+
     eql.add_index("products", "product_category_id", vec!["/category_id"])?;
 
-    let chai=json!({
+    let chai = json!({
         "product_name":"Chai",
         "category_id":1,
+        "quantity_per_unit":"10 boxes x 20 bags",
     });
     eql.insert("products", 1, &chai)?;
-    let chang=json!({
-        "product_name":"Chang",
-        "category_id":1,
-        "quantity_per_unit":"10 boxes x 30 bags",
-    });
-    eql.insert("products", 2, &chang)?;
-    let chang=json!({
+    let chang = json!({
         "product_name":"Chang",
         "category_id":1,
         "quantity_per_unit":"24 - 12 oz bottles"
     });
     eql.insert("products", 2, &chang)?;
-    let aniseed=json!({
+    let aniseed = json!({
         "product_name":"Aniseed Syrup",
         "category_id":2,
         "quantity_per_unit":"12 - 550 ml bottles"
     });
     eql.insert("products", 3, &aniseed)?;
-    let cajun=json!({
+    let cajun = json!({
         "product_name":"Chef Anton's Cajun Seasoning",
         "category_id":2,
         "quantity_per_unit":"48 - 6 oz jars"
@@ -423,129 +480,194 @@ fn write_data(eql: &mut EQLDB) -> Result<()>{
 fn test_two_types_nested_loops() -> Result<()> {
     let path = "test_two_types_nested_loops.db";
     {
-        let mut eql=EQLDB::open(path)?;
-        write_data(&mut eql)?;
+        let mut eql = EQLDB::open(path)?;
+        write_northwind_data(&mut eql)?;
 
-        let v1:Vec<EQLRecord>=eql.execute(
-            nested_loops(
-                extract(&["description"], 
-                        scan("categories")),
-                    |rec| augment(rec.value.clone(), 
-                    nested_loops(
-                        index_lookup("products","product_category_id", vec![rec.key.clone()]),
-                        |rec| key_lookup("products",rec.key.clone())
+        let v1: Vec<EQLRecord> = eql
+            .execute(nested_loops(
+                extract(&["description"], scan("categories")),
+                |rec| {
+                    augment(
+                        rec.value.clone(),
+                        nested_loops(
+                            index_lookup("products", "product_category_id", vec![rec.key.clone()]),
+                            |rec| key_lookup("products", rec.key.clone()),
+                        ),
                     )
-                    )
-            )).collect();
-        assert_eq!(4,v1.len());
-        let keys1:Vec<Value>=v1.iter().map(|t|t.key.clone()).collect();
+                },
+            ))
+            .collect();
+        assert_eq!(4, v1.len());
+        let keys1: Vec<Value> = v1.iter().map(|t| t.key.clone()).collect();
         assert_eq!(true, keys1.contains(&Value::from(1)));
         assert_eq!(true, keys1.contains(&Value::from(2)));
         assert_eq!(true, keys1.contains(&Value::from(3)));
         assert_eq!(true, keys1.contains(&Value::from(4)));
-        assert_eq!(4,v1.iter().filter(|EQLRecord{key,value,..}| {
-            if let Some(m) = value.as_object() {
-                if key==&Value::from(1) || key==&Value::from(2) {
-                    assert_eq!(Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),m.get("description"));
-                } else {
-                    assert_eq!(Some(&Value::from("Sweet and savory sauces, relishes, spreads, and seasonings")),m.get("description"));
-                }
-                return true;
-            }
-            return false;
-        }).count());
-        
-
+        assert_eq!(
+            4,
+            v1.iter()
+                .filter(|EQLRecord { key, value, .. }| {
+                    if let Some(m) = value.as_object() {
+                        if key == &Value::from(1) || key == &Value::from(2) {
+                            assert_eq!(
+                                Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),
+                                m.get("description")
+                            );
+                        } else {
+                            assert_eq!(
+                                Some(&Value::from(
+                                    "Sweet and savory sauces, relishes, spreads, and seasonings"
+                                )),
+                                m.get("description")
+                            );
+                        }
+                        return true;
+                    }
+                    return false;
+                })
+                .count()
+        );
     }
     EQLDB::destroy(path)?;
     Ok(())
 }
 
-
-
 #[test]
-fn test_hash() -> Result<()>{
+fn test_hash() -> Result<()> {
     let path = "test_hash.db";
     {
-        let mut eql=EQLDB::open(path)?;
-        write_data(&mut eql)?;
-        let v1:Vec<EQLRecord>=eql.execute(
-            hash_lookup(scan("categories"), 
-                |rec| Some(rec.key.clone()), 
-                scan("products"), 
-                |rec| rec.value.as_object().map(|o| o.get("category_id")).flatten().cloned(), 
-                |(o,mut rec)| o.map(|rec1| {
-                    if let Some (d) = rec1.value.as_object().map(|o| o.get("description")).flatten(){
-                        rec.value.as_object_mut().unwrap().insert(String::from("description"),d.clone());
-                    } 
-                    rec
-                })
-        )).collect();
-        assert_eq!(4,v1.len());
-        let keys1:Vec<Value>=v1.iter().map(|t|t.key.clone()).collect();
+        let mut eql = EQLDB::open(path)?;
+        write_northwind_data(&mut eql)?;
+        let v1: Vec<EQLRecord> = eql
+            .execute(hash_lookup(
+                scan("categories"),
+                RecordExtract::Key,
+                scan("products"),
+                RecordExtract::pointer("/category_id"),
+                |(o, mut rec)| {
+                    o.map(|rec1| {
+                        if let Some(d) = rec1
+                            .value
+                            .as_object()
+                            .map(|o| o.get("description"))
+                            .flatten()
+                        {
+                            rec.value
+                                .as_object_mut()
+                                .unwrap()
+                                .insert(String::from("description"), d.clone());
+                        }
+                        rec
+                    })
+                },
+            ))
+            .collect();
+        assert_eq!(4, v1.len());
+        let keys1: Vec<Value> = v1.iter().map(|t| t.key.clone()).collect();
         assert_eq!(true, keys1.contains(&Value::from(1)));
         assert_eq!(true, keys1.contains(&Value::from(2)));
         assert_eq!(true, keys1.contains(&Value::from(3)));
         assert_eq!(true, keys1.contains(&Value::from(4)));
-        assert_eq!(4,v1.iter().filter(|EQLRecord{key,value,..}| {
-            if let Some(m) = value.as_object() {
-                if key==&Value::from(1) || key==&Value::from(2) {
-                    assert_eq!(Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),m.get("description"));
-                } else {
-                    assert_eq!(Some(&Value::from("Sweet and savory sauces, relishes, spreads, and seasonings")),m.get("description"));
-                }
-                return true;
-            }
-            return false;
-        }).count());
+        assert_eq!(
+            4,
+            v1.iter()
+                .filter(|EQLRecord { key, value, .. }| {
+                    if let Some(m) = value.as_object() {
+                        if key == &Value::from(1) || key == &Value::from(2) {
+                            assert_eq!(
+                                Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),
+                                m.get("description")
+                            );
+                        } else {
+                            assert_eq!(
+                                Some(&Value::from(
+                                    "Sweet and savory sauces, relishes, spreads, and seasonings"
+                                )),
+                                m.get("description")
+                            );
+                        }
+                        return true;
+                    }
+                    return false;
+                })
+                .count()
+        );
     }
-    EQLDB::destroy( path)?;
+    EQLDB::destroy(path)?;
     Ok(())
 }
 
 #[test]
-fn test_merge() -> Result<()>{
+fn test_merge() -> Result<()> {
     let path = "test_merge.db";
     {
-        let mut eql=EQLDB::open(path)?;
-        write_data(&mut eql)?;
-        let v1:Vec<EQLRecord>=eql.execute(
-            merge(scan("categories"), 
-                |rec| vec![rec.key.clone()], 
-                index_lookup_keys("products","product_category_id", vec![],vec!["category_id"]), 
-                |rec| rec.value.as_object().map(|v| v.get("category_id")).flatten().cloned().into_iter().collect(), 
-                |(orec1, orec2)| orec1.map(|rec1| {
-                    orec2.map(|rec2| {
-                        let mut rec3=rec2.clone();
-                        if let Some (d) = rec1.value.as_object().map(|o| o.get("description")).flatten(){
-                            rec3.value.as_object_mut().unwrap().insert(String::from("description"),d.clone());
-                        } 
-                        rec3
-                    })
-                }).flatten()
-        )).collect();
-        assert_eq!(4,v1.len());
-        let keys1:Vec<Value>=v1.iter().map(|t|t.key.clone()).collect();
+        let mut eql = EQLDB::open(path)?;
+        write_northwind_data(&mut eql)?;
+        let v1: Vec<EQLRecord> = eql
+            .execute(merge(
+                scan("categories"),
+                vec![RecordExtract::Key],
+                index_lookup_keys(
+                    "products",
+                    "product_category_id",
+                    vec![],
+                    vec!["category_id"],
+                ),
+                vec![RecordExtract::pointer("/category_id")],
+                |(orec1, orec2)| {
+                    orec1
+                        .map(|rec1| {
+                            orec2.map(|rec2| {
+                                let mut rec3 = rec2.clone();
+                                if let Some(d) = rec1
+                                    .value
+                                    .as_object()
+                                    .map(|o| o.get("description"))
+                                    .flatten()
+                                {
+                                    rec3.value
+                                        .as_object_mut()
+                                        .unwrap()
+                                        .insert(String::from("description"), d.clone());
+                                }
+                                rec3
+                            })
+                        })
+                        .flatten()
+                },
+            ))
+            .collect();
+        assert_eq!(4, v1.len());
+        let keys1: Vec<Value> = v1.iter().map(|t| t.key.clone()).collect();
         assert_eq!(true, keys1.contains(&Value::from(1)));
         assert_eq!(true, keys1.contains(&Value::from(2)));
         assert_eq!(true, keys1.contains(&Value::from(3)));
         assert_eq!(true, keys1.contains(&Value::from(4)));
-        assert_eq!(4,v1.iter().filter(|EQLRecord{key,value,..}| {
-            if let Some(m) = value.as_object() {
-                if key==&Value::from(1) || key==&Value::from(2) {
-                    assert_eq!(Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),m.get("description"));
-                } else {
-                    assert_eq!(Some(&Value::from("Sweet and savory sauces, relishes, spreads, and seasonings")),m.get("description"));
-                }
-                return true;
-            }
-            return false;
-        }).count());
+        assert_eq!(
+            4,
+            v1.iter()
+                .filter(|EQLRecord { key, value, .. }| {
+                    if let Some(m) = value.as_object() {
+                        if key == &Value::from(1) || key == &Value::from(2) {
+                            assert_eq!(
+                                Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),
+                                m.get("description")
+                            );
+                        } else {
+                            assert_eq!(
+                                Some(&Value::from(
+                                    "Sweet and savory sauces, relishes, spreads, and seasonings"
+                                )),
+                                m.get("description")
+                            );
+                        }
+                        return true;
+                    }
+                    return false;
+                })
+                .count()
+        );
     }
-    EQLDB::destroy( path)?;
+    EQLDB::destroy(path)?;
     Ok(())
 }
-
-
-    
-    
