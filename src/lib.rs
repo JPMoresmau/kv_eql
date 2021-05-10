@@ -154,6 +154,10 @@ pub enum Operation {
         second_key: Vec<RecordExtract>,
         join: MergeJoinFunction,
     },
+    Map {
+        operation: Box<Operation>,
+        process: Box<dyn Fn(EQLRecord) ->EQLRecord>,
+    },
 }
 
 /// The underlying type for Hash join function
@@ -290,7 +294,7 @@ where
 /// Builds an operation to merge two operations
 /// # Arguments
 /// * `first` - the first operation
-/// * `first_key`- builds the array of values that will be the key for the first records.
+/// * `first_key` - builds the array of values that will be the key for the first records.
 /// * `second` - the second operation
 /// * `second_key` - builds the array of values that will be the key for the second records
 /// * `join` - the function to join records from both operations. There may be only a first record, only a second record, or both.
@@ -312,6 +316,18 @@ where
         second_key: second_key,
         join: Box::new(join),
     }
+}
+
+/// # Builds an operation to transform each record into another
+/// # Arguments
+/// * `operation` - the underlying operation providing the original record
+/// * `process` - the function to pass each record to
+pub fn map<F>(
+    operation: Operation,
+    process:  F,
+) -> Operation
+where F: Fn(EQLRecord) -> EQLRecord + 'static, {
+    Operation::Map{operation:Box::new(operation),process:Box::new(process)}
 }
 
 /// The metadata we keep track of
@@ -842,7 +858,10 @@ impl EQLDB {
                     }
                 }
                 return Box::new(v.into_iter());
-            }
+            },
+            Operation::Map {operation, process} => {
+               return Box::new(self.execute(*operation).map(process));
+            },
         }
         Box::new(iter::empty::<EQLRecord>())
     }
@@ -877,15 +896,14 @@ fn extract_from_index_key<K: AsRef<[u8]>>(k: K, keys: &[String]) -> Value {
 }
 
 /// Only keep given names in given JSON value
-fn extract_from_value(value: Value, names: &HashSet<String>) -> Value {
-    match value {
-        Value::Object(mut m) => Value::Object(
-            names
-                .iter()
-                .filter_map(|n| get_map_value(n, &mut m))
-                .collect(),
-        ),
-        _ => value,
+fn extract_from_value(mut value: Value, names: &HashSet<String>) -> Value {
+    if let Some(m) = value.as_object_mut(){
+        names
+            .iter()
+            .filter_map(|n| get_map_value(n, m))
+            .collect()
+    } else {
+        value
     }
 }
 

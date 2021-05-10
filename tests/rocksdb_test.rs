@@ -1,5 +1,5 @@
 use anyhow::Result;
-use kv_eql::{EQLBatch, EQLDB, EQLRecord, RecordExtract, augment, extract, hash_lookup, index_lookup, index_lookup_keys, key_lookup, merge, nested_loops, scan};
+use kv_eql::{EQLBatch, EQLDB, EQLRecord, RecordExtract, augment, extract, hash_lookup, index_lookup, index_lookup_keys, key_lookup, map, merge, nested_loops, scan};
 use serde_json::json;
 use serde_json::Value;
 
@@ -659,6 +659,68 @@ fn test_merge() -> Result<()> {
                 })
                 .count()
         );
+    }
+    EQLDB::destroy(path)?;
+    Ok(())
+}
+
+#[test]
+fn test_map() -> Result<()> {
+    let path = "test_map.db";
+    {
+        let mut meta = EQLDB::open(path)?;
+        let mary = json!({
+            "name": "Mary Doe",
+            "age": 34
+        });
+
+        meta.insert("type1", "key2", &mary)?;
+
+        let john = json!({
+            "name": "John Doe",
+            "age": 43,
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ]
+        });
+
+        meta.insert("type1", "key1", &john)?;
+
+        let john2 = json!({
+            "name": "John Doe",
+            "age": "43",
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ]
+        });
+
+        let mary2 = json!({
+            "name": "Mary Doe",
+            "age": "34",
+        });
+
+       
+        let v1: Vec<EQLRecord> = meta.execute(map(scan("type1"),|mut r|{
+            if let Some(m) = r.value.as_object_mut(){
+                if let Some(v) = m.get("age") {
+                    if let Some(i) = v.as_i64() {
+                        let v2=json!(format!("{}",i));
+                        m.insert(String::from("age"), v2);
+                    }
+                }
+            }
+            r
+        })).collect();
+        assert_eq!(2, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(Value::from("key2"), v1[1].key);
+        assert_eq!(john2, v1[0].value);
+        assert_eq!(mary2, v1[1].value);
+
+
+
     }
     EQLDB::destroy(path)?;
     Ok(())
