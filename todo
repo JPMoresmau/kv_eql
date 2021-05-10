@@ -1,5 +1,4 @@
-- no way to implement groups/join (have a function take iterator inside the operation)?
-- express as string in language, with parser
-- take operation and indicates performance based on size of tables/indices
 - unique indices
+- take operation and indicates performance based on size of tables/indices
+- express as string in language, with parser
 - web service interface

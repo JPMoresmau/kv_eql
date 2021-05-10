@@ -1,5 +1,7 @@
+use std::iter;
+
 use anyhow::Result;
-use kv_eql::{EQLBatch, EQLDB, EQLRecord, RecordExtract, augment, extract, hash_lookup, index_lookup, index_lookup_keys, key_lookup, map, merge, nested_loops, scan};
+use kv_eql::{EQLBatch, EQLDB, EQLRecord, RecordExtract, augment, extract, hash_lookup, index_lookup, index_lookup_keys, key_lookup, process, merge, nested_loops, scan};
 use serde_json::json;
 use serde_json::Value;
 
@@ -665,8 +667,8 @@ fn test_merge() -> Result<()> {
 }
 
 #[test]
-fn test_map() -> Result<()> {
-    let path = "test_map.db";
+fn test_process() -> Result<()> {
+    let path = "test_process.db";
     {
         let mut meta = EQLDB::open(path)?;
         let mary = json!({
@@ -701,24 +703,42 @@ fn test_map() -> Result<()> {
             "age": "34",
         });
 
-       
-        let v1: Vec<EQLRecord> = meta.execute(map(scan("type1"),|mut r|{
-            if let Some(m) = r.value.as_object_mut(){
-                if let Some(v) = m.get("age") {
-                    if let Some(i) = v.as_i64() {
-                        let v2=json!(format!("{}",i));
-                        m.insert(String::from("age"), v2);
+        // map
+        let v1: Vec<EQLRecord> = meta.execute(process(scan("type1"),Box::new(|it:Box<dyn Iterator<Item=EQLRecord>>| {
+            Box::new(it.map(|mut r| {
+                if let Some(m) = r.value.as_object_mut(){
+                    if let Some(v) = m.get("age") {
+                        if let Some(i) = v.as_i64() {
+                            let v2=json!(format!("{}",i));
+                            m.insert(String::from("age"), v2);
+                        }
                     }
                 }
-            }
-            r
-        })).collect();
+                r
+            }))
+        }))).collect();
         assert_eq!(2, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
         assert_eq!(Value::from("key2"), v1[1].key);
         assert_eq!(john2, v1[0].value);
         assert_eq!(mary2, v1[1].value);
 
+        // SUM
+        let v1: Vec<EQLRecord> = meta.execute(process(scan("type1"),Box::new(|it| {
+            Box::new(iter::once(EQLRecord{key:Value::Null,value:json!(it.fold(0, |c,r| {
+                if let Some(m) = r.value.as_object(){
+                    if let Some(v) = m.get("age") {
+                        if let Some(i) = v.as_i64() {
+                            return c+i;
+                        }
+                    }
+                }
+                c
+            }))}))
+        }))).collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::Null, v1[0].key);
+        assert_eq!(json!(77), v1[0].value);
 
 
     }

@@ -114,7 +114,7 @@ use anyhow::Result;
 use thiserror::Error;
 
 /// A specific operation on the data store
-pub enum Operation {
+pub enum Operation<'a> {
     Scan {
         name: String,
     },
@@ -124,11 +124,11 @@ pub enum Operation {
     },
     Extract {
         names: HashSet<String>,
-        operation: Box<Operation>,
+        operation: Box<Operation<'a>>,
     },
     Augment {
         value: Value,
-        operation: Box<Operation>,
+        operation: Box<Operation<'a>>,
     },
     IndexLookup {
         name: String,
@@ -137,26 +137,26 @@ pub enum Operation {
         keys: Vec<String>,
     },
     NestedLoops {
-        first: Box<Operation>,
+        first: Box<Operation<'a>>,
         second: Box<dyn Fn(&EQLRecord) -> Operation>,
     },
     HashLookup {
-        build: Box<Operation>,
+        build: Box<Operation<'a>>,
         build_hash: RecordExtract,
-        probe: Box<Operation>,
+        probe: Box<Operation<'a>>,
         probe_hash: RecordExtract,
         join: HashJoinFunction,
     },
     Merge {
-        first: Box<Operation>,
+        first: Box<Operation<'a>>,
         first_key: Vec<RecordExtract>,
-        second: Box<Operation>,
+        second: Box<Operation<'a>>,
         second_key: Vec<RecordExtract>,
         join: MergeJoinFunction,
     },
-    Map {
-        operation: Box<Operation>,
-        process: Box<dyn Fn(EQLRecord) ->EQLRecord>,
+    Process {
+        operation: Box<Operation<'a>>,
+        process: Box<dyn Fn(Box<dyn Iterator<Item=EQLRecord> +'a>) -> Box<dyn Iterator<Item=EQLRecord> +'a> +'a>
     },
 }
 
@@ -169,7 +169,7 @@ type MergeJoinFunction = Box<dyn Fn((Option<&EQLRecord>, Option<&EQLRecord>)) ->
 /// # Arguments
 /// * `name` - the name of the record type
 ///
-pub fn scan<N: Into<String>>(name: N) -> Operation {
+pub fn scan<'a, N: Into<String>>(name: N) -> Operation<'a> {
     Operation::Scan { name: name.into() }
 }
 
@@ -177,7 +177,7 @@ pub fn scan<N: Into<String>>(name: N) -> Operation {
 /// # Arguments
 /// * `name` - the name of the record type
 /// * `key` - the key
-pub fn key_lookup<N: Into<String>>(name: N, key: Value) -> Operation {
+pub fn key_lookup<'a, N: Into<String>>(name: N, key: Value) -> Operation<'a> {
     Operation::KeyLookup {
         name: name.into(),
         key,
@@ -188,7 +188,7 @@ pub fn key_lookup<N: Into<String>>(name: N, key: Value) -> Operation {
 /// # Arguments
 /// * `extract` - the names of the keys to extract, the others will be dropped
 /// * `operation` - the wrapped operation
-pub fn extract(extract: &[&str], operation: Operation) -> Operation {
+pub fn extract<'a>(extract: &[&str], operation: Operation<'a>) -> Operation<'a> {
     let mut hs = HashSet::new();
     for e in extract.iter() {
         hs.insert((*e).into());
@@ -203,7 +203,7 @@ pub fn extract(extract: &[&str], operation: Operation) -> Operation {
 /// # Arguments
 /// * `value` - the value to merge with the values from the wrapped operation
 /// * `operation` - the wrapped operation
-pub fn augment(value: Value, operation: Operation) -> Operation {
+pub fn augment<'a>(value: Value, operation: Operation<'a>) -> Operation <'a>{
     Operation::Augment {
         value,
         operation: Box::new(operation),
@@ -216,11 +216,11 @@ pub fn augment(value: Value, operation: Operation) -> Operation {
 /// * `index_name` - the name of the index
 /// * `values` - the values to lookup in the index, in the order the index was built. Null values can be used to indicate
 /// all values can be considered at this level in the index. An empty Vec means the full index will be scanned
-pub fn index_lookup<N: Into<String>, IN: Into<String>>(
+pub fn index_lookup<'a,N: Into<String>, IN: Into<String>>(
     name: N,
     index_name: IN,
     values: Vec<Value>,
-) -> Operation {
+) -> Operation<'a> {
     Operation::IndexLookup {
         name: name.into(),
         index_name: index_name.into(),
@@ -236,12 +236,12 @@ pub fn index_lookup<N: Into<String>, IN: Into<String>>(
 /// * `values` - the values to lookup in the index, in the order the index was built. Null values can be used to indicate
 /// all values can be considered at this level in the index. An empty Vec means the full index will be scanned
 /// * `keys` - the names to use as keys in the returned Value for each index values section, empty string meaning "ignore this part of the index key"
-pub fn index_lookup_keys<N: Into<String>, IN: Into<String>, OT: AsRef<str>>(
+pub fn index_lookup_keys<'a, N: Into<String>, IN: Into<String>, OT: AsRef<str>>(
     name: N,
     index_name: IN,
     values: Vec<Value>,
     keys: Vec<OT>,
-) -> Operation {
+) -> Operation<'a> {
     Operation::IndexLookup {
         name: name.into(),
         index_name: index_name.into(),
@@ -272,13 +272,13 @@ where
 /// * `probe_hash` - the function to build a value from each record from the second operation, returning None if we want to ignore that record
 /// * `join` - the function to join the record from the first operation if it exists and the record from the second operation. Two records
 /// are joined when they gave the same value via `build_hash` and `probe_hash`
-pub fn hash_lookup<F>(
-    build: Operation,
+pub fn hash_lookup<'a,F>(
+    build: Operation<'a>,
     build_hash: RecordExtract,
-    probe: Operation,
+    probe: Operation<'a>,
     probe_hash: RecordExtract,
     join: F,
-) -> Operation
+) -> Operation<'a>
 where
     F: Fn((Option<&EQLRecord>, EQLRecord)) -> Option<EQLRecord> + 'static,
 {
@@ -299,13 +299,13 @@ where
 /// * `second_key` - builds the array of values that will be the key for the second records
 /// * `join` - the function to join records from both operations. There may be only a first record, only a second record, or both.
 /// The join uses key comparisons so expects the two sets of keys to be in the same order
-pub fn merge<F>(
-    first: Operation,
+pub fn merge<'a, F>(
+    first: Operation<'a>,
     first_key: Vec<RecordExtract>,
-    second: Operation,
+    second: Operation<'a>,
     second_key: Vec<RecordExtract>,
     join: F,
-) -> Operation
+) -> Operation<'a>
 where
     F: Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Option<EQLRecord> + 'static,
 {
@@ -318,16 +318,17 @@ where
     }
 }
 
-/// # Builds an operation to transform each record into another
+/// # Builds an operation to transform an iterator over record into another
 /// # Arguments
-/// * `operation` - the underlying operation providing the original record
-/// * `process` - the function to pass each record to
-pub fn map<F>(
-    operation: Operation,
-    process:  F,
-) -> Operation
-where F: Fn(EQLRecord) -> EQLRecord + 'static, {
-    Operation::Map{operation:Box::new(operation),process:Box::new(process)}
+/// * `operation` - the underlying operation providing the original records
+/// * `process` - the function to pass the iterator it
+pub fn process<'a>(
+    operation: Operation<'a>,
+    process: Box<dyn Fn(Box<dyn Iterator<Item=EQLRecord> +'a>) -> Box<dyn Iterator<Item=EQLRecord> +'a> +'a>,
+) -> Operation<'a>
+//where F: Fn(Box<dyn Iterator<Item=EQLRecord> +'a>) -> Box<dyn Iterator<Item=EQLRecord> +'a> +'a, 
+{
+    Operation::Process{operation:Box::new(operation),process}
 }
 
 /// The metadata we keep track of
@@ -696,7 +697,7 @@ impl EQLDB {
     /// Executes an operation and returns an iterator on records
     /// # Arguments
     /// * `operation` - The operation
-    pub fn execute(&self, operation: Operation) -> Box<dyn Iterator<Item = EQLRecord> + '_> {
+    pub fn execute<'a>(&'a self, operation: Operation<'a>) -> Box<dyn Iterator<Item = EQLRecord> + 'a> {
         match operation {
             Operation::Scan { name } => {
                 let ocf1 = self.db.cf_handle(&name);
@@ -784,7 +785,7 @@ impl EQLDB {
             Operation::NestedLoops { first, second } => {
                 return Box::new(
                     self.execute(*first)
-                        .flat_map(move |rec| self.execute(second(&rec))),
+                        .flat_map(move |rec| self.execute(second(&rec)).collect::<Vec<EQLRecord>>()),
                 );
             }
             Operation::HashLookup {
@@ -859,8 +860,8 @@ impl EQLDB {
                 }
                 return Box::new(v.into_iter());
             },
-            Operation::Map {operation, process} => {
-               return Box::new(self.execute(*operation).map(process));
+            Operation::Process {operation, process} => {
+               return Box::new(process(self.execute(*operation)));
             },
         }
         Box::new(iter::empty::<EQLRecord>())
