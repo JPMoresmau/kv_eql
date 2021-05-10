@@ -1,4 +1,6 @@
 - unique indices
 - take operation and indicates performance based on size of tables/indices
+    - what about nested loops where the operation is built on the fly -> need to run to get the statistics?
 - express as string in language, with parser
 - web service interface
+- perf tests
