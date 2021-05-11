@@ -116,6 +116,12 @@ use thiserror::Error;
 mod ops;
 pub use ops::*;
 
+mod parse;
+pub use parse::*;
+
+mod script;
+pub use script::*;
+
 /// Metadata errors
 #[derive(Error, Debug)]
 pub enum MetadataError {

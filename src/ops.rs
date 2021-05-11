@@ -230,7 +230,7 @@ pub struct Metadata {
 }
 
 /// A record from an operation. Both keys and values are arbitrary JSON values, but some operations expect the values to be JSON objects
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EQLRecord {
     pub key: Value,
     pub value: Value,
@@ -253,7 +253,7 @@ pub enum RecordExtract {
     /// Extracts the result of the given pointer on the value
     Pointer(String),
     /// Arbitrary function to retrieve a value
-    Function(Box<dyn Fn(&EQLRecord) -> Option<Value>>),
+    Function(Box<dyn Fn(&EQLRecord) -> Value>),
 }
 
 impl RecordExtract {
@@ -272,7 +272,13 @@ impl RecordExtract {
             RecordExtract::Key => Some(rec.key.clone()),
             RecordExtract::Value => Some(rec.value.clone()),
             RecordExtract::Pointer(p) => rec.value.pointer(p).map(|v| v.clone()),
-            RecordExtract::Function(f) => f(rec),
+            RecordExtract::Function(f) => {
+                let v=f(rec);
+                if v.is_null() {
+                    return None;
+                }
+                Some(v)
+            },
         }
     }
 
