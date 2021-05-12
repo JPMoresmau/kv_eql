@@ -426,7 +426,7 @@ impl EQLDB {
     /// Executes an operation and returns an iterator on records
     /// # Arguments
     /// * `operation` - The operation
-    pub fn execute<'a>(&'a self, operation: Operation<'a>) -> Result<Box<dyn Iterator<Item = EQLRecord> + 'a>, QueryError> {
+    pub fn execute<'a>(&'a self, operation: Operation<'a>) -> Result<Box<dyn Iterator<Item = EQLRecord> + 'a>> {
         match operation {
             Operation::Scan { name } => {
                 let ocf1 = self.db.cf_handle(&name);
@@ -512,17 +512,14 @@ impl EQLDB {
                 }
             }
             Operation::NestedLoops { first, second } => {
-                let vs = self.execute(*first)?.try_fold(vec![], |mut vs,rec| {
-                    let b=self.execute(second(&rec))?;
-                    let mut v=b.collect::<Vec<EQLRecord>>();
-                    vs.append(&mut v);
-                    //v.as_mut().map(|v| vs.append(v));
-                    Ok(vs)
-                })?; 
-                return Ok(Box::new(vs.into_iter()));
-                /*return self.execute(*first)?
-                        .flat_map(move |rec| self.execute(second(&rec)).map(|b| *b).collect()).map(|v| Box::new(v.into_iter()))
-                ;*/
+                return Ok(Box::new(self.execute(*first)?
+                    .map(|rec| self.execute(second(&rec)).map(|i| i.collect::<Vec<EQLRecord>>()))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                ))
+                ;
+
             }
             Operation::HashLookup {
                 build,
