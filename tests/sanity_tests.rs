@@ -47,7 +47,7 @@ fn test_scan_unknown() -> Result<()> {
     {
         let eql = EQLDB::open(path)?;
 
-        let v1: Vec<EQLRecord> = eql.execute(scan("type1")).collect();
+        let v1: Vec<EQLRecord> = eql.execute(scan("type1"))?.collect();
         assert_eq!(0, v1.len());
     }
     EQLDB::destroy(path)?;
@@ -82,7 +82,7 @@ fn test_index_lookup_unknown() -> Result<()> {
                 "idx1",
                 vec![json!("John Doe")],
                 vec!["nameix", "ageix"],
-            ))
+            ))?
             .collect();
         assert_eq!(0, v1.len());
     }

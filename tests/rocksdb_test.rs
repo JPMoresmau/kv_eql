@@ -68,7 +68,7 @@ fn test_scan() -> Result<()> {
         meta.insert("type1", "key1", &john)?;
 
         //let v1=vec![(b"key1",&john),(b"key2",&mary)];
-        let v1: Vec<EQLRecord> = meta.execute(scan("type1")).collect();
+        let v1: Vec<EQLRecord> = meta.execute(scan("type1"))?.collect();
         assert_eq!(2, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
         assert_eq!(Value::from("key2"), v1[1].key);
@@ -88,7 +88,7 @@ fn test_scan() -> Result<()> {
         });
 
         let v1: Vec<EQLRecord> = meta
-            .execute(extract(&["name", "phones"], scan("type1")))
+            .execute(extract(&["name", "phones"], scan("type1")))?
             .collect();
         assert_eq!(2, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
@@ -125,7 +125,7 @@ fn test_lookup() -> Result<()> {
 
         //let v1=vec![(b"key1",&john),(b"key2",&mary)];
         let v1: Vec<EQLRecord> = meta
-            .execute(key_lookup("type1", Value::from("key1")))
+            .execute(key_lookup("type1", Value::from("key1")))?
             .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
@@ -139,7 +139,7 @@ fn test_lookup() -> Result<()> {
             .execute(extract(
                 &["name", "phones"],
                 key_lookup("type1", Value::from("key2")),
-            ))
+            ))?
             .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::from("key2"), v1[0].key);
@@ -231,7 +231,7 @@ fn test_index_lookup() -> Result<()> {
                 "idx1",
                 vec![json!("John Doe")],
                 vec!["nameix", "ageix"],
-            ))
+            ))?
             .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
@@ -243,7 +243,7 @@ fn test_index_lookup() -> Result<()> {
                 "idx1",
                 vec![json!("John Doe"), json!(43)],
                 vec!["nameix", "ageix"],
-            ))
+            ))?
             .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
@@ -255,7 +255,7 @@ fn test_index_lookup() -> Result<()> {
                 "idx1",
                 vec![json!("John Doe"), json!(34)],
                 vec!["nameix", "ageix"],
-            ))
+            ))?
             .collect();
         assert_eq!(0, v1.len());
 
@@ -265,7 +265,7 @@ fn test_index_lookup() -> Result<()> {
                 "idx1",
                 vec![json!("Mary Doe")],
                 vec!["nameix", "ageix"],
-            ))
+            ))?
             .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::from("key2"), v1[0].key);
@@ -277,7 +277,7 @@ fn test_index_lookup() -> Result<()> {
                 "idx1",
                 vec![json!("Mary Doe")],
                 vec!["", "ageix"],
-            ))
+            ))?
             .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::from("key2"), v1[0].key);
@@ -289,7 +289,7 @@ fn test_index_lookup() -> Result<()> {
                 "idx1",
                 vec![json!("John Deer"), json!(43)],
                 vec!["nameix", "ageix"],
-            ))
+            ))?
             .collect();
         assert_eq!(0, v1.len());
 
@@ -299,7 +299,7 @@ fn test_index_lookup() -> Result<()> {
                 "idx1",
                 vec![],
                 vec!["nameix", "ageix"],
-            ))
+            ))?
             .collect();
         assert_eq!(2, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
@@ -314,7 +314,7 @@ fn test_index_lookup() -> Result<()> {
                 "idx1",
                 vec![json!("John Doe")],
                 vec!["nameix", "ageix"],
-            ))
+            ))?
             .collect();
         assert_eq!(0, v1.len());
     }
@@ -359,7 +359,7 @@ fn test_index_nested_loops() -> Result<()> {
             .execute(nested_loops(
                 index_lookup("type1", "idx1", vec![json!("John Doe")]),
                 |rec| key_lookup("type1", rec.key.clone()),
-            ))
+            ))?
             .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
@@ -369,7 +369,7 @@ fn test_index_nested_loops() -> Result<()> {
             .execute(nested_loops(
                 index_lookup_keys("type1", "idx1", vec![json!("John Doe")], vec!["", "ageix"]),
                 |rec| augment(rec.value.clone(), key_lookup("type1", rec.key.clone())),
-            ))
+            ))?
             .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
@@ -404,14 +404,14 @@ fn test_batch() -> Result<()> {
         eql.batch_insert(&mut batch, "type1", "key2", &mary)?;
 
         let v1: Vec<EQLRecord> = eql
-            .execute(extract(&["name", "phones"], scan("type1")))
+            .execute(extract(&["name", "phones"], scan("type1")))?
             .collect();
         assert_eq!(0, v1.len());
 
         eql.write(batch)?;
 
         //let v1=vec![(b"key1",&john),(b"key2",&mary)];
-        let v1: Vec<EQLRecord> = eql.execute(scan("type1")).collect();
+        let v1: Vec<EQLRecord> = eql.execute(scan("type1"))?.collect();
         assert_eq!(2, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
         assert_eq!(Value::from("key2"), v1[1].key);
@@ -423,13 +423,13 @@ fn test_batch() -> Result<()> {
         eql.batch_delete(&mut batch, "type1", "key1")?;
         eql.batch_delete(&mut batch, "type1", "key2")?;
 
-        let v1: Vec<EQLRecord> = eql.execute(scan("type1")).collect();
+        let v1: Vec<EQLRecord> = eql.execute(scan("type1"))?.collect();
         assert_eq!(2, v1.len());
 
         eql.write(batch)?;
 
         let v1: Vec<EQLRecord> = eql
-            .execute(extract(&["name", "phones"], scan("type1")))
+            .execute(extract(&["name", "phones"], scan("type1")))?
             .collect();
         assert_eq!(0, v1.len());
     }
@@ -497,7 +497,7 @@ fn test_two_types_nested_loops() -> Result<()> {
                         ),
                     )
                 },
-            ))
+            ))?
             .collect();
         assert_eq!(4, v1.len());
         let keys1: Vec<Value> = v1.iter().map(|t| t.key.clone()).collect();
@@ -558,7 +558,7 @@ fn test_hash() -> Result<()> {
                         rec
                     })
                 },
-            ))
+            ))?
             .collect();
         assert_eq!(4, v1.len());
         let keys1: Vec<Value> = v1.iter().map(|t| t.key.clone()).collect();
@@ -629,7 +629,7 @@ fn test_merge() -> Result<()> {
                         })
                         .flatten()
                 },
-            ))
+            ))?
             .collect();
         assert_eq!(4, v1.len());
         let keys1: Vec<Value> = v1.iter().map(|t| t.key.clone()).collect();
@@ -716,7 +716,7 @@ fn test_process() -> Result<()> {
                 }
                 r
             }))
-        }))).collect();
+        })))?.collect();
         assert_eq!(2, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
         assert_eq!(Value::from("key2"), v1[1].key);
@@ -735,7 +735,7 @@ fn test_process() -> Result<()> {
                 }
                 c
             }))}))
-        }))).collect();
+        })))?.collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::Null, v1[0].key);
         assert_eq!(json!(77), v1[0].value);

@@ -3,6 +3,14 @@ use serde_json::{Value};
 use std::{
     collections::{HashMap, HashSet},
 };
+use thiserror::Error;
+
+
+#[derive(Error, Debug)]
+pub enum QueryError {
+    #[error("Script error in nested loops: {0}")]
+    NestedLoopsError(String)
+}
 
 /// A specific operation on the data store
 pub enum Operation<'a> {
@@ -49,6 +57,9 @@ pub enum Operation<'a> {
         operation: Box<Operation<'a>>,
         process: Box<dyn Fn(Box<dyn Iterator<Item=EQLRecord> +'a>) -> Box<dyn Iterator<Item=EQLRecord> +'a> +'a>
     },
+    Error {
+        error: QueryError,
+    }
 }
 
 /// The underlying type for Hash join function

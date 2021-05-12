@@ -97,7 +97,7 @@ use rocksdb::{
 };
 
 use serde_json::{Map, Value};
-use std::io::{BufReader, BufWriter};
+use std::{io::{BufReader, BufWriter}};
 use std::path::{Path, PathBuf};
 use std::{
     cmp::Ordering,
@@ -132,6 +132,7 @@ pub enum MetadataError {
         index_name: String,
     },
 }
+
 
 /// A batch of operations, in the same transaction
 #[derive(Default)]
@@ -235,7 +236,7 @@ impl EQLDB {
 
         self.save_metadata()?;
 
-        self.execute(scan(rec_type.as_ref()))
+        self.execute(scan(rec_type.as_ref()))?
             .try_fold(WriteBatch::default(), |mut b, rec| {
                 let kv = serde_json::to_vec(&rec.key).unwrap();
                 let ix_key = index_key(&on, &kv, &rec.value);
@@ -425,7 +426,7 @@ impl EQLDB {
     /// Executes an operation and returns an iterator on records
     /// # Arguments
     /// * `operation` - The operation
-    pub fn execute<'a>(&'a self, operation: Operation<'a>) -> Box<dyn Iterator<Item = EQLRecord> + 'a> {
+    pub fn execute<'a>(&'a self, operation: Operation<'a>) -> Result<Box<dyn Iterator<Item = EQLRecord> + 'a>, QueryError> {
         match operation {
             Operation::Scan { name } => {
                 let ocf1 = self.db.cf_handle(&name);
@@ -436,7 +437,7 @@ impl EQLDB {
                             serde_json::from_slice::<Value>(&v).unwrap(),
                         )
                     });
-                    return Box::new(it);
+                    return Ok(Box::new(it));
                 }
             }
             Operation::KeyLookup { name, key } => {
@@ -447,26 +448,26 @@ impl EQLDB {
                         self.db.get_cf(cf1, &rk).unwrap().map(|v| {
                             EQLRecord::new(key, serde_json::from_slice::<Value>(&v).unwrap())
                         });
-                    return Box::new(v.into_iter());
+                    return Ok(Box::new(v.into_iter()));
                 }
             }
             Operation::Extract {
                 names,
                 operation: b_op,
             } => {
-                return Box::new(self.execute(*b_op).map(move |rec| EQLRecord {
+                return Ok(Box::new(self.execute(*b_op)?.map(move |rec| EQLRecord {
                     value: extract_from_value(rec.value, &names),
                     ..rec
-                }));
+                })));
             }
             Operation::Augment {
                 value,
                 operation: b_op,
             } => {
-                return Box::new(self.execute(*b_op).map(move |rec| EQLRecord {
+                return Ok(Box::new(self.execute(*b_op)?.map(move |rec| EQLRecord {
                     value: merge_values(&value, rec.value),
                     ..rec
-                }));
+                })));
             }
             Operation::IndexLookup {
                 name,
@@ -486,7 +487,7 @@ impl EQLDB {
                                     extract_from_index_key(&k, &keys),
                                 )
                             });
-                        return Box::new(it);
+                        return Ok(Box::new(it));
                     } else {
                         let mut v = vec![];
 
@@ -506,15 +507,22 @@ impl EQLDB {
                                 extract_from_index_key(&k, &keys),
                             )
                         });
-                        return Box::new(it);
+                        return Ok(Box::new(it));
                     }
                 }
             }
             Operation::NestedLoops { first, second } => {
-                return Box::new(
-                    self.execute(*first)
-                        .flat_map(move |rec| self.execute(second(&rec)).collect::<Vec<EQLRecord>>()),
-                );
+                let vs = self.execute(*first)?.try_fold(vec![], |mut vs,rec| {
+                    let b=self.execute(second(&rec))?;
+                    let mut v=b.collect::<Vec<EQLRecord>>();
+                    vs.append(&mut v);
+                    //v.as_mut().map(|v| vs.append(v));
+                    Ok(vs)
+                })?; 
+                return Ok(Box::new(vs.into_iter()));
+                /*return self.execute(*first)?
+                        .flat_map(move |rec| self.execute(second(&rec)).map(|b| *b).collect()).map(|v| Box::new(v.into_iter()))
+                ;*/
             }
             Operation::HashLookup {
                 build,
@@ -524,17 +532,17 @@ impl EQLDB {
                 join,
             } => {
                 let map: HashMap<String, EQLRecord> = self
-                    .execute(*build)
+                    .execute(*build)?
                     .flat_map(|rec| build_hash.apply(&rec).map(|s| (format!("{}", s), rec)))
                     .collect();
-                return Box::new(self.execute(*probe).flat_map(move |rec| {
+                return Ok(Box::new(self.execute(*probe)?.flat_map(move |rec| {
                     probe_hash.apply(&rec)
                         .map(|h| {
                             let hash = format!("{}", h);
                             join((map.get(&hash), rec))
                         })
                         .flatten()
-                }));
+                })));
             }
             Operation::Merge {
                 first,
@@ -543,8 +551,8 @@ impl EQLDB {
                 second_key,
                 join,
             } => {
-                let mut it1 = self.execute(*first).peekable();
-                let mut it2 = self.execute(*second).peekable();
+                let mut it1 = self.execute(*first)?.peekable();
+                let mut it2 = self.execute(*second)?.peekable();
                 let mut v = vec![];
                 let mut orec1 = it1.next();
                 let mut orec2 = it2.next();
@@ -586,13 +594,16 @@ impl EQLDB {
                         orec2 = it2.next();
                     }
                 }
-                return Box::new(v.into_iter());
+                return Ok(Box::new(v.into_iter()));
             },
             Operation::Process {operation, process} => {
-               return Box::new(process(self.execute(*operation)));
+               return Ok(Box::new(process(self.execute(*operation)?)));
             },
+            Operation::Error{error} => {
+                return Err(error.into());
+            }
         }
-        Box::new(iter::empty::<EQLRecord>())
+        Ok(Box::new(iter::empty::<EQLRecord>()))
     }
 }
 
