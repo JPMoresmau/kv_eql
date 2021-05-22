@@ -128,17 +128,75 @@ impl ScriptedOperation {
               match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
                 .and_then(|d| from_dynamic::<ScriptedOperation>(&d)){
                 Ok(sop)=>match sop.into_rust(){
-                  Ok(op)=>op,
-                  Err(e)=>Operation::Error{error:QueryError::NestedLoopsError(format!("{}",e))},
+                  Ok(op)=>Ok(op),
+                  Err(e)=>Err(QueryError::NestedLoopsError(format!("{}",e)).into()),
                 },
-                Err(e)=>Operation::Error{error:QueryError::NestedLoopsError(format!("{}",e))},
+                Err(e)=>Err(QueryError::NestedLoopsError(format!("{}",e)).into()),
               }
                             
             })})
           }),
-          ScriptedOperation::HashLookup{build,build_hash,probe,probe_hash,join}=>unimplemented!(),
-          ScriptedOperation::Merge{first, first_key,second,second_key,join}=>unimplemented!(),
-          ScriptedOperation::Process{operation,process}=>unimplemented!(),
+          ScriptedOperation::HashLookup{build,build_hash,probe,probe_hash,join}=>{
+            let op1=build.into_rust()?;
+            let s1=build_hash.into_rust()?;
+            let op2=probe.into_rust()?;
+            let s2=probe_hash.into_rust()?;
+            let engine = Engine::new();
+            let ast = engine.compile(&join)?;
+
+            Ok(Operation::HashLookup{build:Box::new(op1),build_hash:s1,probe:Box::new(op2),probe_hash:s2,join:Box::new(move |(rec1,rec2)|{
+              let engine = Engine::new();
+              let mut scope = Scope::new();
+              let e=EQLRecord::empty();
+              scope.push_constant_dynamic("build", to_dynamic(rec1.unwrap_or(&e)).unwrap());
+              scope.push_constant_dynamic("probe", to_dynamic(rec2).unwrap());
+              match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
+                .and_then(|d| from_dynamic::<EQLRecord>(&d)){
+                Ok(sop)=>Ok(sop.ensure_not_empty()),
+                Err(e)=>Err(QueryError::HashLookupError(format!("{}",e)).into()),
+              }
+            })})
+            }
+            ,
+          ScriptedOperation::Merge{first, first_key,second,second_key,join}=>{
+            let op1=first.into_rust()?;
+            let k1=first_key.into_iter().map(|s| s.into_rust()).collect::<Result<Vec<RecordExtract>>>()?;
+            let op2=second.into_rust()?;
+            let k2=second_key.into_iter().map(|s| s.into_rust()).collect::<Result<Vec<RecordExtract>>>()?;
+            let engine = Engine::new();
+            let ast = engine.compile(&join)?;
+
+            Ok(Operation::Merge{first:Box::new(op1),first_key:k1,second:Box::new(op2),second_key:k2,join:Box::new(move |(rec1,rec2)|{
+              let engine = Engine::new();
+              let mut scope = Scope::new();
+              let e=EQLRecord::empty();
+              scope.push_constant_dynamic("rec1", to_dynamic(rec1.unwrap_or(&e)).unwrap());
+              scope.push_constant_dynamic("rec2", to_dynamic(rec2.unwrap_or(&e)).unwrap());
+              match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
+              .and_then(|d| from_dynamic::<EQLRecord>(&d)){
+                Ok(sop)=>Ok(sop.ensure_not_empty()),
+                Err(e)=>Err(QueryError::MergeError(format!("{}",e)).into()),
+              }
+            })})
+          },
+          ScriptedOperation::Process{operation,process}=>{
+            let op1=operation.into_rust()?;
+            let engine = Engine::new();
+            let ast = engine.compile(&process)?;
+            Ok(Operation::Process{operation:Box::new(op1),process:Box::new(move |it|{
+              let engine = Engine::new();
+              let mut scope = Scope::new();
+              let v=it.map(|rec| {
+                scope.push_constant_dynamic("rec", to_dynamic(rec).unwrap());
+                match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
+                .and_then(|d| from_dynamic::<EQLRecord>(&d)){
+                  Ok(sop)=>Ok(sop),
+                  Err(e)=>Err(QueryError::MergeError(format!("{}",e)).into()),
+                }
+              }).collect::<Result<Vec<EQLRecord>>>()?;
+              Ok(Box::new(v.into_iter()))
+            })})
+          },
       }
     }
 }

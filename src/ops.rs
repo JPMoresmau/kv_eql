@@ -3,13 +3,18 @@ use serde_json::{Value};
 use std::{
     collections::{HashMap, HashSet},
 };
+use anyhow::Result;
 use thiserror::Error;
 
 
 #[derive(Error, Debug)]
 pub enum QueryError {
     #[error("Script error in nested loops: {0}")]
-    NestedLoopsError(String)
+    NestedLoopsError(String),
+    #[error("Script error in hash lookup: {0}")]
+    HashLookupError(String),
+    #[error("Script error in merge: {0}")]
+    MergeError(String),
 }
 
 /// A specific operation on the data store
@@ -37,7 +42,7 @@ pub enum Operation<'a> {
     },
     NestedLoops {
         first: Box<Operation<'a>>,
-        second: Box<dyn Fn(&EQLRecord) -> Operation>,
+        second: Box<dyn Fn(&EQLRecord) -> Result<Operation>>,
     },
     HashLookup {
         build: Box<Operation<'a>>,
@@ -55,17 +60,14 @@ pub enum Operation<'a> {
     },
     Process {
         operation: Box<Operation<'a>>,
-        process: Box<dyn Fn(Box<dyn Iterator<Item=EQLRecord> +'a>) -> Box<dyn Iterator<Item=EQLRecord> +'a> +'a>
+        process: Box<dyn Fn(Box<dyn Iterator<Item=EQLRecord> +'a>) -> Result<Box<dyn Iterator<Item=EQLRecord> +'a>> +'a>
     },
-    Error {
-        error: QueryError,
-    }
 }
 
 /// The underlying type for Hash join function
-type HashJoinFunction = Box<dyn Fn((Option<&EQLRecord>, EQLRecord)) -> Option<EQLRecord>>;
+type HashJoinFunction = Box<dyn Fn((Option<&EQLRecord>, EQLRecord)) -> Result<Option<EQLRecord>>>;
 /// the underlying type for Merge join function
-type MergeJoinFunction = Box<dyn Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Option<EQLRecord>>;
+type MergeJoinFunction = Box<dyn Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Result<Option<EQLRecord>>>;
 
 /// Builds an operation to scan a whole record type
 /// # Arguments
@@ -158,7 +160,7 @@ pub fn index_lookup_keys<'a, N: Into<String>, IN: Into<String>, OT: AsRef<str>>(
 /// * `second` - a function to build an operation given each record from the first operation
 pub fn nested_loops<F>(first: Operation, second: F) -> Operation
 where
-    F: Fn(&EQLRecord) -> Operation + 'static,
+    F: Fn(&EQLRecord) -> Result<Operation> + 'static,
 {
     Operation::NestedLoops {
         first: Box::new(first),
@@ -182,7 +184,7 @@ pub fn hash_lookup<'a,F>(
     join: F,
 ) -> Operation<'a>
 where
-    F: Fn((Option<&EQLRecord>, EQLRecord)) -> Option<EQLRecord> + 'static,
+    F: Fn((Option<&EQLRecord>, EQLRecord)) -> Result<Option<EQLRecord>> + 'static,
 {
     Operation::HashLookup {
         build: Box::new(build),
@@ -209,7 +211,7 @@ pub fn merge<'a, F>(
     join: F,
 ) -> Operation<'a>
 where
-    F: Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Option<EQLRecord> + 'static,
+    F: Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Result<Option<EQLRecord>> + 'static,
 {
     Operation::Merge {
         first: Box::new(first),
@@ -226,7 +228,7 @@ where
 /// * `process` - the function to pass the iterator it
 pub fn process<'a>(
     operation: Operation<'a>,
-    process: Box<dyn Fn(Box<dyn Iterator<Item=EQLRecord> +'a>) -> Box<dyn Iterator<Item=EQLRecord> +'a> +'a>,
+    process: Box<dyn Fn(Box<dyn Iterator<Item=EQLRecord> +'a>) -> Result<Box<dyn Iterator<Item=EQLRecord> +'a>> +'a>,
 ) -> Operation<'a>
 //where F: Fn(Box<dyn Iterator<Item=EQLRecord> +'a>) -> Box<dyn Iterator<Item=EQLRecord> +'a> +'a, 
 {
@@ -251,6 +253,28 @@ impl EQLRecord {
     /// Creates a new record
     pub fn new(key: Value, value: Value) -> Self {
         EQLRecord { key, value }
+    }
+
+    pub fn empty() -> Self {
+        EQLRecord { key:Value::Null, value:Value::Null }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.key.is_null() && self.value.is_null()
+    }
+
+    pub fn ensure_not_empty(self) -> Option<Self> {
+        if self.is_empty(){
+            None
+        } else {
+            Some(self)
+        }
+    }
+}
+
+impl Default for EQLRecord {
+    fn default() -> Self {
+        EQLRecord::empty()
     }
 }
 

@@ -1,7 +1,10 @@
 use std::iter;
 
 use anyhow::Result;
-use kv_eql::{EQLBatch, EQLDB, EQLRecord, RecordExtract, augment, extract, hash_lookup, index_lookup, index_lookup_keys, key_lookup, process, merge, nested_loops, scan};
+use kv_eql::{
+    augment, extract, hash_lookup, index_lookup, index_lookup_keys, key_lookup, merge,
+    nested_loops, process, scan, EQLBatch, EQLRecord, RecordExtract, EQLDB,
+};
 use serde_json::json;
 use serde_json::Value;
 
@@ -358,7 +361,7 @@ fn test_index_nested_loops() -> Result<()> {
         let v1: Vec<EQLRecord> = eql
             .execute(nested_loops(
                 index_lookup("type1", "idx1", vec![json!("John Doe")]),
-                |rec| key_lookup("type1", rec.key.clone()),
+                |rec| Ok(key_lookup("type1", rec.key.clone())),
             ))?
             .collect();
         assert_eq!(1, v1.len());
@@ -368,7 +371,12 @@ fn test_index_nested_loops() -> Result<()> {
         let v1: Vec<EQLRecord> = eql
             .execute(nested_loops(
                 index_lookup_keys("type1", "idx1", vec![json!("John Doe")], vec!["", "ageix"]),
-                |rec| augment(rec.value.clone(), key_lookup("type1", rec.key.clone())),
+                |rec| {
+                    Ok(augment(
+                        rec.value.clone(),
+                        key_lookup("type1", rec.key.clone()),
+                    ))
+                },
             ))?
             .collect();
         assert_eq!(1, v1.len());
@@ -489,13 +497,13 @@ fn test_two_types_nested_loops() -> Result<()> {
             .execute(nested_loops(
                 extract(&["description"], scan("categories")),
                 |rec| {
-                    augment(
+                    Ok(augment(
                         rec.value.clone(),
                         nested_loops(
                             index_lookup("products", "product_category_id", vec![rec.key.clone()]),
-                            |rec| key_lookup("products", rec.key.clone()),
+                            |rec| Ok(key_lookup("products", rec.key.clone())),
                         ),
-                    )
+                    ))
                 },
             ))?
             .collect();
@@ -547,16 +555,15 @@ fn test_hash() -> Result<()> {
                 scan("products"),
                 RecordExtract::pointer("/category_id"),
                 |(o, mut rec)| {
-                    o.map(|rec1| {
-                        if let Some(d) = rec1
-                            .value.pointer("/description"){
+                    Ok(o.map(|rec1| {
+                        if let Some(d) = rec1.value.pointer("/description") {
                             rec.value
                                 .as_object_mut()
                                 .unwrap()
                                 .insert(String::from("description"), d.clone());
                         }
                         rec
-                    })
+                    }))
                 },
             ))?
             .collect();
@@ -613,12 +620,11 @@ fn test_merge() -> Result<()> {
                 ),
                 vec![RecordExtract::pointer("/category_id")],
                 |(orec1, orec2)| {
-                    orec1
+                    Ok(orec1
                         .map(|rec1| {
                             orec2.map(|rec2| {
                                 let mut rec3 = rec2.clone();
-                                if let Some(d) = rec1
-                                    .value.pointer("/description") {
+                                if let Some(d) = rec1.value.pointer("/description") {
                                     rec3.value
                                         .as_object_mut()
                                         .unwrap()
@@ -627,7 +633,7 @@ fn test_merge() -> Result<()> {
                                 rec3
                             })
                         })
-                        .flatten()
+                        .flatten())
                 },
             ))?
             .collect();
@@ -704,19 +710,24 @@ fn test_process() -> Result<()> {
         });
 
         // map
-        let v1: Vec<EQLRecord> = meta.execute(process(scan("type1"),Box::new(|it:Box<dyn Iterator<Item=EQLRecord>>| {
-            Box::new(it.map(|mut r| {
-                if let Some(m) = r.value.as_object_mut(){
-                    if let Some(v) = m.get("age") {
-                        if let Some(i) = v.as_i64() {
-                            let v2=json!(format!("{}",i));
-                            m.insert(String::from("age"), v2);
+        let v1: Vec<EQLRecord> = meta
+            .execute(process(
+                scan("type1"),
+                Box::new(|it: Box<dyn Iterator<Item = EQLRecord>>| {
+                    Ok(Box::new(it.map(|mut r| {
+                        if let Some(m) = r.value.as_object_mut() {
+                            if let Some(v) = m.get("age") {
+                                if let Some(i) = v.as_i64() {
+                                    let v2 = json!(format!("{}", i));
+                                    m.insert(String::from("age"), v2);
+                                }
+                            }
                         }
-                    }
-                }
-                r
-            }))
-        })))?.collect();
+                        r
+                    })))
+                }),
+            ))?
+            .collect();
         assert_eq!(2, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
         assert_eq!(Value::from("key2"), v1[1].key);
@@ -724,23 +735,29 @@ fn test_process() -> Result<()> {
         assert_eq!(mary2, v1[1].value);
 
         // SUM
-        let v1: Vec<EQLRecord> = meta.execute(process(scan("type1"),Box::new(|it| {
-            Box::new(iter::once(EQLRecord{key:Value::Null,value:json!(it.fold(0, |c,r| {
-                if let Some(m) = r.value.as_object(){
-                    if let Some(v) = m.get("age") {
-                        if let Some(i) = v.as_i64() {
-                            return c+i;
-                        }
-                    }
-                }
-                c
-            }))}))
-        })))?.collect();
+        let v1: Vec<EQLRecord> = meta
+            .execute(process(
+                scan("type1"),
+                Box::new(|it| {
+                    Ok(Box::new(iter::once(EQLRecord {
+                        key: Value::Null,
+                        value: json!(it.fold(0, |c, r| {
+                            if let Some(m) = r.value.as_object() {
+                                if let Some(v) = m.get("age") {
+                                    if let Some(i) = v.as_i64() {
+                                        return c + i;
+                                    }
+                                }
+                            }
+                            c
+                        })),
+                    })))
+                }),
+            ))?
+            .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::Null, v1[0].key);
         assert_eq!(json!(77), v1[0].value);
-
-
     }
     EQLDB::destroy(path)?;
     Ok(())

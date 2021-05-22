@@ -56,13 +56,13 @@ eql
 .execute(nested_loops(
    extract(&["description"], scan("categories")),
    |rec| {
-       augment(
+       Ok(augment(
            rec.value.clone(),
            nested_loops(
                index_lookup("products", "product_category_id", vec![rec.key.clone()]),
-               |rec| key_lookup("products", rec.key.clone()),
+               |rec| Ok(key_lookup("products", rec.key.clone())),
            ),
-       )
+       ))
    },
 ));
 # Ok::<(), anyhow::Error>(())
@@ -79,12 +79,12 @@ eql.execute(hash_lookup(
    scan("products"),
    RecordExtract::pointer("/category_id"),
    |(o, mut rec)| {
-       o.map(|rec1| {
+       Ok(o.map(|rec1| {
            if let Some(d) = rec1.value.pointer("/description"){
                rec.value.as_object_mut().unwrap().insert(String::from("description"), d.clone());
            }
            rec
-       })
+       }))
    },
    ));
 # Ok::<(), anyhow::Error>(())
@@ -513,7 +513,7 @@ impl EQLDB {
             }
             Operation::NestedLoops { first, second } => {
                 return Ok(Box::new(self.execute(*first)?
-                    .map(|rec| self.execute(second(&rec)).map(|i| i.collect::<Vec<EQLRecord>>()))
+                    .map(|rec| second(&rec).and_then(|op| self.execute(op)).map(|i| i.collect::<Vec<EQLRecord>>()))
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .flatten()
@@ -538,8 +538,7 @@ impl EQLDB {
                             let hash = format!("{}", h);
                             join((map.get(&hash), rec))
                         })
-                        .flatten()
-                })));
+                }).collect::<Result<Vec<Option<EQLRecord>>>>()?.into_iter().filter_map(|c| c)));
             }
             Operation::Merge {
                 first,
@@ -560,32 +559,32 @@ impl EQLDB {
                             let k2 = values_key(&RecordExtract::multiple(&second_key, rec2));
                             match k1.cmp(&k2) {
                                 Ordering::Less => {
-                                    if let Some(rec3) = join((Some(rec1), None)) {
+                                    if let Some(rec3) =  join((Some(rec1), None))?{
                                         v.push(rec3);
                                     }
                                     orec1 = it1.next();
                                 }
                                 Ordering::Greater => {
-                                    if let Some(rec3) = join((None, Some(rec2))) {
+                                    if let Some(rec3) = join((None, Some(rec2)))?{
                                         v.push(rec3);
                                     }
                                     orec2 = it2.next();
                                 }
                                 Ordering::Equal => {
-                                    if let Some(rec3) = join((Some(rec1), Some(rec2))) {
+                                    if let Some(rec3) = join((Some(rec1), Some(rec2)))?{
                                         v.push(rec3);
                                     }
                                     orec2 = it2.next();
                                 }
                             }
                         } else {
-                            if let Some(rec3) = join((Some(rec1), None)) {
+                            if let Some(rec3) = join((Some(rec1), None))?{
                                 v.push(rec3);
                             }
                             orec1 = it1.next();
                         }
                     } else if let Some(rec2) = &orec2 {
-                        if let Some(rec3) = join((None, Some(rec2))) {
+                        if let Some(rec3)= join((None, Some(rec2)))?{
                             v.push(rec3);
                         }
                         orec2 = it2.next();
@@ -594,11 +593,8 @@ impl EQLDB {
                 return Ok(Box::new(v.into_iter()));
             },
             Operation::Process {operation, process} => {
-               return Ok(Box::new(process(self.execute(*operation)?)));
+               return process(self.execute(*operation)?);
             },
-            Operation::Error{error} => {
-                return Err(error.into());
-            }
         }
         Ok(Box::new(iter::empty::<EQLRecord>()))
     }
