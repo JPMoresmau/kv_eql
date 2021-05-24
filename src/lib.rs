@@ -598,6 +598,13 @@ impl EQLDB {
         }
         Ok(Box::new(iter::empty::<EQLRecord>()))
     }
+
+    pub fn execute_script<'a>(&'a self, script: &'static str) -> Result<Box<dyn Iterator<Item = EQLRecord> + 'a>> {
+        let (_,sop)=parse_operation(script)?;
+        println!("sop:{:?}",sop);
+        let op = sop.into_rust()?;
+        self.execute(op)
+    }
 }
 
 /// Merge JSON values

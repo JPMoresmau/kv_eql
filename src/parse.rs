@@ -1,19 +1,9 @@
 use crate::script::*;
 
-use nom::{
-    branch::alt,
-    bytes::complete::{escaped_transform, tag, tag_no_case, take, take_while, take_while1},
-    character::{
+use nom::{IResult, branch::alt, bytes::complete::{escaped_transform, tag, tag_no_case, take, take_while, take_while1}, character::{
         complete::{char, none_of},
         is_alphanumeric,
-    },
-    combinator::{cut, map, opt, value},
-    error::{context, ContextError, ParseError},
-    multi::{count, fold_many0, many_till, separated_list0},
-    number::complete::double,
-    sequence::{delimited, pair, preceded, separated_pair, terminated},
-    IResult,
-};
+    }, combinator::{cut, map, opt, value}, error::{context, ContextError, ParseError}, multi::{count, fold_many0, many_till, separated_list0}, number::complete::{double}, sequence::{delimited, pair, preceded, separated_pair, terminated}};
 
 use serde_json::{Map, Value};
 
@@ -172,13 +162,13 @@ fn parse_eql_string<'a, Error: ParseError<&'a str>>(
 
 fn parse_string<'a, Error: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, String, Error> {
     let string_parser = escaped_transform(none_of(r#""\"#), '\\', parse_string_control);
-    let mut delim_parser = delimited(char('"'), string_parser, char('"'));
-    delim_parser(input)
+    let delim_parser = delimited(char('"'), string_parser, char('"'));
+    alt((map(tag("\"\""),|_s| String::new()),delim_parser))(input)
 }
 
 fn quoted_str<'a, Error: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, Error> {
     //https://stackoverflow.com/a/61989390/827593
-
+    let (input, _) = sp(input)?;
     // Count number of leading #
     let (remaining, hash_count) = fold_many0(tag("#"), 0, |acc, _| acc + 1)(input)?;
 
@@ -213,6 +203,12 @@ fn spaced<'a, Error: ParseError<&'a str>>(
     txt: &'a str,
 ) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, Error> {
     preceded(sp, tag_no_case(txt))
+}
+
+fn sp_char<'a, Error: ParseError<&'a str>>(
+    txt: char,
+) -> impl FnMut(&'a str) -> IResult<&'a str, char, Error> {
+    preceded(sp, char(txt))
 }
 
 fn sp<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, &'a str, E> {
@@ -257,10 +253,10 @@ fn string_array<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     context(
         "array",
         preceded(
-            char('['),
+            sp_char('['),
             cut(terminated(
-                separated_list0(preceded(sp, char(',')), string),
-                preceded(sp, char(']')),
+                separated_list0(sp_char(','), preceded(sp,parse_eql_string)),
+                sp_char(']'),
             )),
         ),
     )(i)
@@ -271,7 +267,7 @@ fn key_value<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
 ) -> IResult<&'a str, (String, Value), E> {
     separated_pair(
         preceded(sp, string),
-        cut(preceded(sp, char(':'))),
+        cut(sp_char(':')),
         json_value,
     )(i)
 }
@@ -375,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_parse_extract() {
-        match parse_operation(r#"extract(["name","age"],key_lookup("accounts",123))"#) {
+        match parse_operation(r#"extract(["name", "age"],key_lookup("accounts",123))"#) {
             Ok(op) => {
                 if let ScriptedOperation::Extract { names, operation } = op.1 {
                     assert_eq!(2, names.len());
@@ -394,7 +390,26 @@ mod tests {
             }
             Err(e) => panic!("Cannot parse: {}", e),
         };
-        match parse_operation(r#"extract(["name","age"],key_lookup(accounts,123))"#) {
+        match parse_operation(r#"extract(["name" , "age" ],key_lookup(accounts,123))"#) {
+            Ok(op) => {
+                if let ScriptedOperation::Extract { names, operation } = op.1 {
+                    assert_eq!(2, names.len());
+                    assert_eq!(true, names.contains("name"));
+                    assert_eq!(true, names.contains("age"));
+                    assert_eq!(
+                        ScriptedOperation::KeyLookup {
+                            name: "accounts".into(),
+                            key: json!(123.0)
+                        },
+                        *operation
+                    );
+                } else {
+                    panic!("Not extract");
+                }
+            }
+            Err(e) => panic!("Cannot parse: {}", e),
+        };
+        match parse_operation(r#"extract([name , age ],key_lookup(accounts,123))"#) {
             Ok(op) => {
                 if let ScriptedOperation::Extract { names, operation } = op.1 {
                     assert_eq!(2, names.len());
@@ -483,6 +498,13 @@ mod tests {
             vec![json!("123")],
             vec!["name", "age"],
         );
+        test_parse_index_lookup_arb(
+            r#"index_lookup(accounts , account_id , ["123"] , ["","age"])"#,
+            "accounts",
+            "account_id",
+            vec![json!("123")],
+            vec!["", "age"],
+        );
     }
 
     fn test_parse_index_lookup_arb(
@@ -514,7 +536,7 @@ mod tests {
         ScriptedOperation::IndexLookup{name:"accounts".into(),index_name:"account_id".into(),values: vec![json!("123")],keys:vec!["name".into(), "age".into()]},
         r#"key_lookup("type1", rec.key)"#
       );
-      test_parse_nested_loops_arb("nested_loops(index_lookup(accounts,account_id,[\"123\"],[\"name\",\"age\"]),#\"key_lookup(type1, rec.key)\"#)",
+      test_parse_nested_loops_arb("nested_loops(index_lookup(accounts,account_id,[\"123\"],[\"name\",\"age\"]),  #\"key_lookup(type1, rec.key)\"#)",
         ScriptedOperation::IndexLookup{name:"accounts".into(),index_name:"account_id".into(),values: vec![json!("123")],keys:vec!["name".into(), "age".into()]},
         r#"key_lookup(type1, rec.key)"#
       );

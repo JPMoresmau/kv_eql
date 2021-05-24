@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::ops::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value};
-use rhai::{Dynamic, Engine, Scope, serde::{from_dynamic, to_dynamic}};
+use rhai::{Dynamic, Engine, ImmutableString, Scope, serde::{from_dynamic, to_dynamic}};
 
 use anyhow::Result;
 
@@ -109,6 +109,22 @@ pub enum ScriptedOperation {
   },
 }
 
+fn eql_engine() -> Engine {
+  let mut engine = Engine::new();
+  engine.register_result_fn("scan",|str: ImmutableString| to_dynamic(ScriptedOperation::Scan{name:str.into_owned()}));
+  engine.register_result_fn("key_lookup",|str: ImmutableString, key: Dynamic| to_dynamic(ScriptedOperation::KeyLookup{name:str.into_owned(), key:from_dynamic::<Value>(&key)?}));
+  engine.register_result_fn("extract",|names: Dynamic, op: Dynamic| to_dynamic(ScriptedOperation::Extract{names:from_dynamic(&names)?,operation:Box::new(from_dynamic(&op)?)}));
+  engine.register_result_fn("augment",|value: Dynamic, op: Dynamic| to_dynamic(ScriptedOperation::Augment{value:from_dynamic(&value)?,operation:Box::new(from_dynamic(&op)?)}));
+  engine.register_result_fn("index_lookup",|name: ImmutableString, index: ImmutableString, values: Dynamic| to_dynamic(ScriptedOperation::IndexLookup{name:name.into_owned(),index_name:index.into_owned(),values:from_dynamic(&values)?,keys:vec![]}));
+  engine.register_result_fn("index_lookup",|name: ImmutableString, index: ImmutableString, values: Dynamic, keys: Dynamic| to_dynamic(ScriptedOperation::IndexLookup{name:name.into_owned(),index_name:index.into_owned(),values:from_dynamic(&values)?,keys:from_dynamic(&keys)?}));
+  engine.register_result_fn("nested_loops",|op: Dynamic,second: ImmutableString| to_dynamic(ScriptedOperation::NestedLoops{first:Box::new(from_dynamic(&op)?),second:second.into_owned()}));
+  engine.register_result_fn("hash_lookup",|build: Dynamic,build_hash: Dynamic, probe: Dynamic, probe_hash: Dynamic, join: ImmutableString| to_dynamic(ScriptedOperation::HashLookup{build:Box::new(from_dynamic(&build)?),build_hash:from_dynamic(&build_hash)?,probe:Box::new(from_dynamic(&probe)?),probe_hash:from_dynamic(&probe_hash)?,join:join.into_owned()}));
+  engine.register_result_fn("merge",|first: Dynamic,first_key: Dynamic, second: Dynamic, second_key: Dynamic, join: ImmutableString| to_dynamic(ScriptedOperation::Merge{first:Box::new(from_dynamic(&first)?),first_key:from_dynamic(&first_key)?,second:Box::new(from_dynamic(&second)?),second_key:from_dynamic(&second_key)?,join:join.into_owned()}));
+  engine.register_result_fn("process",|op: Dynamic,process: ImmutableString| to_dynamic(ScriptedOperation::Process{operation:Box::new(from_dynamic(&op)?),process:process.into_owned()}));
+  
+  engine
+}
+
 impl ScriptedOperation {
     /// Convert a scripted record extraction into an executable one
     pub fn into_rust<'a>(self) -> Result<Operation<'a>> {
@@ -119,10 +135,10 @@ impl ScriptedOperation {
           ScriptedOperation::Augment{value,operation}=>operation.into_rust().map(|op| Operation::Augment{value,operation:Box::new(op)}),
           ScriptedOperation::IndexLookup{name,index_name, values, keys}=>Ok(Operation::IndexLookup{name,index_name,values,keys}),
           ScriptedOperation::NestedLoops{first,second}=>first.into_rust().and_then(|op| {
-            let engine = Engine::new();
+            let engine = eql_engine();
             let ast = engine.compile(&second)?;
             Ok(Operation::NestedLoops{first:Box::new(op),second:Box::new(move |rec|{
-              let engine = Engine::new();
+              let engine =eql_engine();
               let mut scope = Scope::new();
               scope.push_constant_dynamic("rec", to_dynamic(rec).unwrap());
               match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
@@ -145,7 +161,7 @@ impl ScriptedOperation {
             let ast = engine.compile(&join)?;
 
             Ok(Operation::HashLookup{build:Box::new(op1),build_hash:s1,probe:Box::new(op2),probe_hash:s2,join:Box::new(move |(rec1,rec2)|{
-              let engine = Engine::new();
+              let engine = eql_engine();
               let mut scope = Scope::new();
               let e=EQLRecord::empty();
               scope.push_constant_dynamic("build", to_dynamic(rec1.unwrap_or(&e)).unwrap());
@@ -163,11 +179,11 @@ impl ScriptedOperation {
             let k1=first_key.into_iter().map(|s| s.into_rust()).collect::<Result<Vec<RecordExtract>>>()?;
             let op2=second.into_rust()?;
             let k2=second_key.into_iter().map(|s| s.into_rust()).collect::<Result<Vec<RecordExtract>>>()?;
-            let engine = Engine::new();
+            let engine = eql_engine();
             let ast = engine.compile(&join)?;
 
             Ok(Operation::Merge{first:Box::new(op1),first_key:k1,second:Box::new(op2),second_key:k2,join:Box::new(move |(rec1,rec2)|{
-              let engine = Engine::new();
+              let engine = eql_engine();
               let mut scope = Scope::new();
               let e=EQLRecord::empty();
               scope.push_constant_dynamic("rec1", to_dynamic(rec1.unwrap_or(&e)).unwrap());
@@ -181,10 +197,10 @@ impl ScriptedOperation {
           },
           ScriptedOperation::Process{operation,process}=>{
             let op1=operation.into_rust()?;
-            let engine = Engine::new();
+            let engine = eql_engine();
             let ast = engine.compile(&process)?;
             Ok(Operation::Process{operation:Box::new(op1),process:Box::new(move |it|{
-              let engine = Engine::new();
+              let engine = eql_engine();
               let mut scope = Scope::new();
               let v=it.map(|rec| {
                 scope.push_constant_dynamic("rec", to_dynamic(rec).unwrap());
