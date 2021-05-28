@@ -92,6 +92,7 @@ eql.execute(hash_lookup(
 
 */
 
+use rhai::Engine;
 use rocksdb::{
     ColumnFamilyDescriptor, Direction, IteratorMode, Options, ReadOptions, WriteBatch, DB,
 };
@@ -122,6 +123,8 @@ pub use parse::*;
 mod script;
 pub use script::*;
 
+use nom::Finish;
+
 /// Metadata errors
 #[derive(Error, Debug)]
 pub enum MetadataError {
@@ -148,6 +151,8 @@ pub struct EQLDB {
     metadata_path: PathBuf,
     /// The metadata
     pub metadata: Metadata,
+    /// The scripting engine
+    pub scripting_engine: Engine,
 }
 
 impl EQLDB {
@@ -186,6 +191,7 @@ impl EQLDB {
             db,
             metadata_path: mdp,
             metadata,
+            scripting_engine:eql_engine(),
         })
     }
 
@@ -599,11 +605,18 @@ impl EQLDB {
         Ok(Box::new(iter::empty::<EQLRecord>()))
     }
 
-    pub fn execute_script<'a>(&'a self, script: &'static str) -> Result<Box<dyn Iterator<Item = EQLRecord> + 'a>> {
-        let (_,sop)=parse_operation(script)?;
-        println!("sop:{:?}",sop);
-        let op = sop.into_rust()?;
-        self.execute(op)
+    pub fn execute_script<'a>(&'a self, script: &'a str) -> Result<Box<dyn Iterator<Item = EQLRecord> + 'a>> {
+        let r=parse_operation_verbose(script).finish();
+        match r {
+            Ok((_,sop))=> {
+                println!("sop:{:?}",sop);
+                let op = sop.into_rust(&self.scripting_engine)?;
+                self.execute(op)
+            },
+            Err(e)=> 
+                Err(QueryError::ParseError(format!("{}",e)).into()) ,
+        }
+        
     }
 }
 

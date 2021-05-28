@@ -3,11 +3,11 @@ use crate::script::*;
 use nom::{IResult, branch::alt, bytes::complete::{escaped_transform, tag, tag_no_case, take, take_while, take_while1}, character::{
         complete::{char, none_of},
         is_alphanumeric,
-    }, combinator::{cut, map, opt, value}, error::{context, ContextError, ParseError}, multi::{count, fold_many0, many_till, separated_list0}, number::complete::{double}, sequence::{delimited, pair, preceded, separated_pair, terminated}};
+    }, combinator::{cut, map, opt, value}, error::{ContextError, ParseError, VerboseError, context}, multi::{count, fold_many0, many_till, separated_list0}, number::complete::{double}, sequence::{delimited, pair, preceded, separated_pair, terminated}};
 
 use serde_json::{Map, Value};
 
-pub fn parse_operation(input: &str) -> IResult<&str, ScriptedOperation> {
+pub fn parse_operation<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
     alt((
         parse_scan,
         parse_key_lookup,
@@ -18,7 +18,11 @@ pub fn parse_operation(input: &str) -> IResult<&str, ScriptedOperation> {
     ))(input)
 }
 
-fn parse_scan(input: &str) -> IResult<&str, ScriptedOperation> {
+pub fn parse_operation_verbose<'a>(input: &'a str) -> IResult<&'a str, ScriptedOperation, VerboseError<&'a str>> {
+    parse_operation(input)
+}
+
+fn parse_scan<'a, Error: ParseError<&'a str>>(input: &'a str)  -> IResult<&'a str, ScriptedOperation, Error> {
     map(
         preceded(
             spaced("scan"),
@@ -34,7 +38,7 @@ fn parse_scan(input: &str) -> IResult<&str, ScriptedOperation> {
     )(input)
 }
 
-fn parse_key_lookup(input: &str) -> IResult<&str, ScriptedOperation> {
+fn parse_key_lookup<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
     map(
         preceded(
             spaced("key_lookup"),
@@ -53,7 +57,7 @@ fn parse_key_lookup(input: &str) -> IResult<&str, ScriptedOperation> {
     )(input)
 }
 
-fn parse_extract(input: &str) -> IResult<&str, ScriptedOperation> {
+fn parse_extract<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
     map(
         preceded(
             spaced("extract"),
@@ -75,7 +79,7 @@ fn parse_extract(input: &str) -> IResult<&str, ScriptedOperation> {
     )(input)
 }
 
-fn parse_augment(input: &str) -> IResult<&str, ScriptedOperation> {
+fn parse_augment<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
     map(
         preceded(
             spaced("augment"),
@@ -97,7 +101,7 @@ fn parse_augment(input: &str) -> IResult<&str, ScriptedOperation> {
     )(input)
 }
 
-fn parse_index_lookup(input: &str) -> IResult<&str, ScriptedOperation> {
+fn parse_index_lookup<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
     map(
         preceded(
             spaced("index_lookup"),
@@ -135,7 +139,7 @@ fn parse_index_lookup(input: &str) -> IResult<&str, ScriptedOperation> {
     )(input)
 }
 
-fn parse_nested_loops(input: &str) -> IResult<&str, ScriptedOperation> {
+fn parse_nested_loops<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
     map(
         preceded(
             spaced("nested_loops"),
@@ -330,7 +334,7 @@ mod tests {
     }
 
     fn test_parse_scan_arb(input: &str, table: &str) {
-        match parse_operation(input) {
+        match parse_operation_verbose(input) {
             Ok(op) => {
                 if let ScriptedOperation::Scan { name } = op.1 {
                     assert_eq!(table, &name);
@@ -355,7 +359,7 @@ mod tests {
     }
 
     fn test_parse_key_lookup_arb(input: &str, table: &str, val: Value) {
-        match parse_operation(input) {
+        match parse_operation_verbose(input) {
             Ok(op) => {
                 assert_eq!(
                     ScriptedOperation::KeyLookup {
@@ -371,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_parse_extract() {
-        match parse_operation(r#"extract(["name", "age"],key_lookup("accounts",123))"#) {
+        match parse_operation_verbose(r#"extract(["name", "age"],key_lookup("accounts",123))"#) {
             Ok(op) => {
                 if let ScriptedOperation::Extract { names, operation } = op.1 {
                     assert_eq!(2, names.len());
@@ -390,7 +394,7 @@ mod tests {
             }
             Err(e) => panic!("Cannot parse: {}", e),
         };
-        match parse_operation(r#"extract(["name" , "age" ],key_lookup(accounts,123))"#) {
+        match parse_operation_verbose(r#"extract(["name" , "age" ],key_lookup(accounts,123))"#) {
             Ok(op) => {
                 if let ScriptedOperation::Extract { names, operation } = op.1 {
                     assert_eq!(2, names.len());
@@ -409,7 +413,7 @@ mod tests {
             }
             Err(e) => panic!("Cannot parse: {}", e),
         };
-        match parse_operation(r#"extract([name , age ],key_lookup(accounts,123))"#) {
+        match parse_operation_verbose(r#"extract([name , age ],key_lookup(accounts,123))"#) {
             Ok(op) => {
                 if let ScriptedOperation::Extract { names, operation } = op.1 {
                     assert_eq!(2, names.len());
@@ -432,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_parse_augment() {
-        match parse_operation(r#"augment({"key":"value"},key_lookup("accounts",123))"#) {
+        match parse_operation_verbose(r#"augment({"key":"value"},key_lookup("accounts",123))"#) {
             Ok(op) => {
                 if let ScriptedOperation::Augment { value, operation } = op.1 {
                     assert_eq!(json!({"key":"value"}), value);
@@ -449,7 +453,7 @@ mod tests {
             }
             Err(e) => panic!("Cannot parse: {}", e),
         };
-        match parse_operation(r#"augment({"key":"value"},key_lookup(accounts,123))"#) {
+        match parse_operation_verbose(r#"augment({"key":"value"},key_lookup(accounts,123))"#) {
             Ok(op) => {
                 if let ScriptedOperation::Augment { value, operation } = op.1 {
                     assert_eq!(json!({"key":"value"}), value);
@@ -514,7 +518,7 @@ mod tests {
         val: Vec<Value>,
         ks: Vec<&str>,
     ) {
-        match parse_operation(input) {
+        match parse_operation_verbose(input) {
             Ok(op) => {
                 assert_eq!(
                     ScriptedOperation::IndexLookup {
@@ -543,7 +547,7 @@ mod tests {
     }
 
     fn test_parse_nested_loops_arb(input: &str, first: ScriptedOperation, script: &str) {
-        match parse_operation(input) {
+        match parse_operation_verbose(input) {
             Ok(op) => {
                 assert_eq!(
                     ScriptedOperation::NestedLoops {

@@ -15,6 +15,8 @@ pub enum QueryError {
     HashLookupError(String),
     #[error("Script error in merge: {0}")]
     MergeError(String),
+    #[error("Parse error in scripted operation: {0}")]
+    ParseError(String),
 }
 
 /// A specific operation on the data store
@@ -42,21 +44,21 @@ pub enum Operation<'a> {
     },
     NestedLoops {
         first: Box<Operation<'a>>,
-        second: Box<dyn Fn(&EQLRecord) -> Result<Operation>>,
+        second: Box<dyn Fn(&EQLRecord) -> Result<Operation<'a>> + 'a>,
     },
     HashLookup {
         build: Box<Operation<'a>>,
         build_hash: RecordExtract,
         probe: Box<Operation<'a>>,
         probe_hash: RecordExtract,
-        join: HashJoinFunction,
+        join: HashJoinFunction<'a>,
     },
     Merge {
         first: Box<Operation<'a>>,
         first_key: Vec<RecordExtract>,
         second: Box<Operation<'a>>,
         second_key: Vec<RecordExtract>,
-        join: MergeJoinFunction,
+        join: MergeJoinFunction<'a>,
     },
     Process {
         operation: Box<Operation<'a>>,
@@ -65,9 +67,9 @@ pub enum Operation<'a> {
 }
 
 /// The underlying type for Hash join function
-type HashJoinFunction = Box<dyn Fn((Option<&EQLRecord>, EQLRecord)) -> Result<Option<EQLRecord>>>;
+type HashJoinFunction<'a> = Box<dyn Fn((Option<&EQLRecord>, EQLRecord)) -> Result<Option<EQLRecord>> +'a>;
 /// the underlying type for Merge join function
-type MergeJoinFunction = Box<dyn Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Result<Option<EQLRecord>>>;
+type MergeJoinFunction<'a> = Box<dyn Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Result<Option<EQLRecord>> +'a>;
 
 /// Builds an operation to scan a whole record type
 /// # Arguments
@@ -158,9 +160,9 @@ pub fn index_lookup_keys<'a, N: Into<String>, IN: Into<String>, OT: AsRef<str>>(
 /// # Arguments
 /// * `first` - the initial operation on which we'll iterate
 /// * `second` - a function to build an operation given each record from the first operation
-pub fn nested_loops<F>(first: Operation, second: F) -> Operation
+pub fn nested_loops<'a, F>(first: Operation<'a>, second: F) -> Operation<'a>
 where
-    F: Fn(&EQLRecord) -> Result<Operation> + 'static,
+    F: Fn(&EQLRecord) -> Result<Operation<'a>> + 'a,
 {
     Operation::NestedLoops {
         first: Box::new(first),
@@ -184,7 +186,7 @@ pub fn hash_lookup<'a,F>(
     join: F,
 ) -> Operation<'a>
 where
-    F: Fn((Option<&EQLRecord>, EQLRecord)) -> Result<Option<EQLRecord>> + 'static,
+    F: Fn((Option<&EQLRecord>, EQLRecord)) -> Result<Option<EQLRecord>> + 'a,
 {
     Operation::HashLookup {
         build: Box::new(build),
@@ -211,7 +213,7 @@ pub fn merge<'a, F>(
     join: F,
 ) -> Operation<'a>
 where
-    F: Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Result<Option<EQLRecord>> + 'static,
+    F: Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Result<Option<EQLRecord>> +'a,
 {
     Operation::Merge {
         first: Box::new(first),
