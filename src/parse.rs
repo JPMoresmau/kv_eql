@@ -15,6 +15,7 @@ pub fn parse_operation<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(i
         parse_augment,
         parse_index_lookup,
         parse_nested_loops,
+        parse_hash_lookup,
     ))(input)
 }
 
@@ -156,6 +157,58 @@ fn parse_nested_loops<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(in
             second: second.into(),
         },
     )(input)
+}
+
+fn parse_hash_lookup<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
+    map(
+        preceded(
+            spaced("hash_lookup"),
+            preceded(
+                spaced("("),
+                cut(terminated(
+                    preceded(sp, 
+                        separated_pair(
+                        separated_pair(
+                            separated_pair(parse_operation, spaced(","), parse_record_extract),
+                            spaced(","),
+                            separated_pair(parse_operation, spaced(","), parse_record_extract)),
+                            spaced(","),
+                            quoted_str)
+                        ),
+                    preceded(sp, char(')')),
+                )),
+            ),
+        )
+        ,|(((build,build_hash),(probe,probe_hash)),join)| ScriptedOperation::HashLookup{
+            build: Box::new(build),
+            build_hash,
+            probe: Box::new(probe),
+            probe_hash,
+            join:join.into()
+        }
+    )(input)
+}
+
+fn parse_record_extract<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedRecordExtract, Error> {
+    alt((parse_record_extract_key,parse_record_extract_value,parse_record_extract_pointer,parse_record_extract_script))(input)
+}
+
+fn parse_record_extract_key<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedRecordExtract, Error> {
+    map(spaced("key"),|_| ScriptedRecordExtract::Key)(input)
+}
+
+fn parse_record_extract_value<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedRecordExtract, Error> {
+    map(spaced("value"),|_| ScriptedRecordExtract::Value)(input)
+}
+
+fn parse_record_extract_pointer<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedRecordExtract, Error> {
+    map(preceded(spaced("pointer"),preceded(spaced("("),terminated(parse_eql_string,spaced(")"))))
+    ,|s| ScriptedRecordExtract::Pointer(s))(input)
+}
+
+fn parse_record_extract_script<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedRecordExtract, Error> {
+    map(preceded(spaced("script"),preceded(spaced("("),terminated(parse_eql_string,spaced(")"))))
+    ,|s| ScriptedRecordExtract::Pointer(s))(input)
 }
 
 fn parse_eql_string<'a, Error: ParseError<&'a str>>(
@@ -560,4 +613,26 @@ mod tests {
             Err(e) => panic!("Cannot parse: {}: {}", input, e),
         }
     }
+
+    #[test]
+    fn test_parse_hash_lookup(){
+        let input="hash_lookup(scan(categories),key,scan(products),pointer(\"/category_id\"),#\"rec2.value[\"description\"]=rec1.value[\"description\"]\"#)";
+        match parse_operation_verbose(input) {
+            Ok(op) => {
+                assert_eq!(
+                    ScriptedOperation::HashLookup {
+                        build: Box::new(ScriptedOperation::Scan{name:"categories".into()}),
+                        build_hash: ScriptedRecordExtract::Key,
+                        probe: Box::new(ScriptedOperation::Scan{name:"products".into()}),
+                        probe_hash: ScriptedRecordExtract::pointer("/category_id"),
+                        join: "rec2.value[\"description\"]=rec1.value[\"description\"]".into()
+                    },
+                    op.1
+                );
+            }
+            Err(e) => panic!("Cannot parse: {}: {}", input, e),
+        }
+        
+    }
+
 }

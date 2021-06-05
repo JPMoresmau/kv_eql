@@ -161,7 +161,7 @@ impl ScriptedOperation {
               let mut scope = Scope::new();
               let e=EQLRecord::empty();
               scope.push_constant_dynamic("build", to_dynamic(rec1.unwrap_or(&e)).unwrap());
-              scope.push_constant_dynamic("probe", to_dynamic(rec2).unwrap());
+              scope.push_dynamic("probe", to_dynamic(rec2).unwrap());
               match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
                 .and_then(|d| from_dynamic::<EQLRecord>(&d)){
                 Ok(sop)=>Ok(sop.ensure_not_empty()),
