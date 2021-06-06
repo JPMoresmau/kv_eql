@@ -139,6 +139,14 @@ pub fn eql_engine() -> Engine {
   engine
 }
 
+/// convert a value to a Dynamic, returning an anhow error
+fn eql_to_dynamic<T>(value: T) -> Result<Dynamic>
+where
+    T: Serialize,
+{
+  to_dynamic(value).map_err(|e| QueryError::DynamicError(format!("{}",e)).into())
+}
+
 impl ScriptedOperation {
     /// Convert a scripted record extraction into an executable one
     pub fn into_rust<'a>(self, engine: &'a Engine) -> Result<Operation<'a>> {
@@ -152,7 +160,7 @@ impl ScriptedOperation {
             let ast = engine.compile(&second)?;
             Ok(Operation::NestedLoops{first:Box::new(op),second:Box::new(move |rec|{
               let mut scope = Scope::new();
-              scope.push_constant_dynamic("rec", to_dynamic(rec).unwrap());
+              scope.push_constant_dynamic("rec", eql_to_dynamic(rec)?);
               match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
                 .and_then(|d| from_dynamic::<ScriptedOperation>(&d)){
                 Ok(sop)=>match sop.into_rust(engine){
@@ -174,8 +182,8 @@ impl ScriptedOperation {
             Ok(Operation::HashLookup{build:Box::new(op1),build_hash:s1,probe:Box::new(op2),probe_hash:s2,join:Box::new(move |(rec1,rec2)|{
               let mut scope = Scope::new();
               let e=EQLRecord::empty();
-              scope.push_constant_dynamic("build", to_dynamic(rec1.unwrap_or(&e)).unwrap());
-              scope.push_dynamic("probe", to_dynamic(rec2).unwrap());
+              scope.push_constant_dynamic("build", eql_to_dynamic(rec1.unwrap_or(&e))?);
+              scope.push_dynamic("probe", eql_to_dynamic(rec2)?);
               match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
                 .and_then(|d| from_dynamic::<EQLRecord>(&d)){
                 Ok(sop)=>Ok(sop.ensure_not_empty()),
@@ -194,8 +202,8 @@ impl ScriptedOperation {
             Ok(Operation::Merge{first:Box::new(op1),first_key:k1,second:Box::new(op2),second_key:k2,join:Box::new(move |(rec1,rec2)|{
               let mut scope = Scope::new();
               let e=EQLRecord::empty();
-              scope.push_constant_dynamic("rec1", to_dynamic(rec1.unwrap_or(&e)).unwrap());
-              scope.push_constant_dynamic("rec2", to_dynamic(rec2.unwrap_or(&e)).unwrap());
+              scope.push_constant_dynamic("rec1", eql_to_dynamic(rec1.unwrap_or(&e))?);
+              scope.push_constant_dynamic("rec2", eql_to_dynamic(rec2.unwrap_or(&e))?);
               match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
               .and_then(|d| from_dynamic::<EQLRecord>(&d)){
                 Ok(sop)=>Ok(sop.ensure_not_empty()),
@@ -209,7 +217,7 @@ impl ScriptedOperation {
             Ok(Operation::Process{operation:Box::new(op1),process:Box::new(move |it|{
               let mut scope = Scope::new();
               let v=it.map(|rec| {
-                scope.push_dynamic("rec", to_dynamic(rec).unwrap());
+                scope.push_dynamic("rec", eql_to_dynamic(rec)?);
                 match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
                 .and_then(|d| from_dynamic::<EQLRecord>(&d)){
                   Ok(sop)=>Ok(sop),
@@ -224,8 +232,8 @@ impl ScriptedOperation {
             let ast = engine.compile(&process)?;
             Ok(Operation::Process{operation:Box::new(op1),process:Box::new(move |it|{
               let mut scope = Scope::new();
-              scope.push_constant("recs",it.map(|e| to_dynamic(e).unwrap()).collect::<Array>());
-              scope.push_dynamic("rec",to_dynamic(EQLRecord::empty()).unwrap());
+              scope.push_constant("recs",it.map(|e| eql_to_dynamic(e)).collect::<Result<Array>>()?);
+              scope.push_dynamic("rec",eql_to_dynamic(EQLRecord::empty())?);
               match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
                {
                   Ok(_)=>{

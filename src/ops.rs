@@ -21,6 +21,8 @@ pub enum QueryError {
     ReduceError(String),
     #[error("Parse error in scripted operation: {0}")]
     ParseError(String),
+    #[error("Error converting value to scripting Dynamic: {0}")]
+    DynamicError(String),
 }
 
 /// A specific operation on the data store
