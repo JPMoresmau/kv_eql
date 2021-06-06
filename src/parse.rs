@@ -17,6 +17,8 @@ pub fn parse_operation<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(i
         parse_nested_loops,
         parse_hash_lookup,
         parse_merge,
+        parse_map,
+        parse_reduce,
     ))(input)
 }
 
@@ -220,6 +222,47 @@ fn parse_merge<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'
     )(input)
 }
 
+fn parse_map<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
+    map(
+        preceded(
+            spaced("map"),
+            preceded(
+                spaced("("),
+                cut(terminated(
+                    preceded(sp, 
+                        separated_pair(
+                            parse_operation,
+                            spaced(","),
+                            quoted_str)
+                        ),
+                    preceded(sp, char(')')),
+                )),
+            )
+        )
+        , |(op,process)| ScriptedOperation::Map{operation:Box::new(op), process:process.into()} 
+    )(input)
+}
+
+fn parse_reduce<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
+    map(
+        preceded(
+            spaced("reduce"),
+            preceded(
+                spaced("("),
+                cut(terminated(
+                    preceded(sp, 
+                        separated_pair(
+                            parse_operation,
+                            spaced(","),
+                            quoted_str)
+                        ),
+                    preceded(sp, char(')')),
+                )),
+            )
+        )
+        , |(op,process)| ScriptedOperation::Reduce{operation:Box::new(op), process:process.into()} 
+    )(input)
+}
 
 fn parse_record_extract<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedRecordExtract, Error> {
     alt((parse_record_extract_key,parse_record_extract_value,parse_record_extract_pointer,parse_record_extract_script,parse_record_extract_multiple))(input)
@@ -693,4 +736,39 @@ mod tests {
 
     }
 
+    #[test]
+    fn test_parse_map(){
+        let input="map(scan(categories),#\"rec.value.[\"description\"]=\"unknown\";rec\"#)";
+        match parse_operation_verbose(input) {
+            Ok(op) => {
+                assert_eq!(
+                    ScriptedOperation::Map {
+                        operation: Box::new(ScriptedOperation::Scan{name:"categories".into()}),
+                        process: "rec.value.[\"description\"]=\"unknown\";rec".into()
+                    },
+                    op.1
+                );
+            }
+            Err(e) => panic!("Cannot parse: {}: {}", input, e),
+        }
+
+    }
+
+    #[test]
+    fn test_parse_reduce(){
+        let input="reduce(scan(categories),#\"rec.value[\"count\"]=recs.len();\"#)";
+        match parse_operation_verbose(input) {
+            Ok(op) => {
+                assert_eq!(
+                    ScriptedOperation::Reduce {
+                        operation: Box::new(ScriptedOperation::Scan{name:"categories".into()}),
+                        process: "rec.value[\"count\"]=recs.len();".into()
+                    },
+                    op.1
+                );
+            }
+            Err(e) => panic!("Cannot parse: {}: {}", input, e),
+        }
+
+    }
 }

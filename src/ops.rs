@@ -15,6 +15,10 @@ pub enum QueryError {
     HashLookupError(String),
     #[error("Script error in merge: {0}")]
     MergeError(String),
+    #[error("Script error in map: {0}")]
+    MapError(String),
+    #[error("Script error in reduce: {0}")]
+    ReduceError(String),
     #[error("Parse error in scripted operation: {0}")]
     ParseError(String),
 }

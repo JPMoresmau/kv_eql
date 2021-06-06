@@ -393,3 +393,89 @@ fn test_merge() -> Result<()> {
     EQLDB::destroy(path)?;
     Ok(())
 }
+
+#[test]
+fn test_map() -> Result<()> {
+    let path = "test_map.db";
+    {
+        let mut meta = EQLDB::open(path)?;
+        let mary = json!({
+            "name": "Mary Doe",
+            "age": 34
+        });
+
+        meta.insert("type1", "key2", &mary)?;
+
+        let john = json!({
+            "name": "John Doe",
+            "age": 43,
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ]
+        });
+
+        meta.insert("type1", "key1", &john)?;
+
+        let john2 = json!({
+            "name": "John Doe",
+            "age": "43",
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ]
+        });
+
+        let mary2 = json!({
+            "name": "Mary Doe",
+            "age": "34",
+        });
+
+        let v1: Vec<EQLRecord> = meta
+            .execute_script("map(scan(type1),#\"if rec.value[\"age\"]!=(){rec.value[\"age\"]=rec.value[\"age\"].to_string()}rec\"#)")?
+                .collect();
+        assert_eq!(2, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(Value::from("key2"), v1[1].key);
+        assert_eq!(john2, v1[0].value);
+        assert_eq!(mary2, v1[1].value);
+
+      
+    }
+    EQLDB::destroy(path)?;
+    Ok(())
+}
+
+#[test]
+fn test_reduce() -> Result<()> {
+    let path = "test_reduce.db";
+    {
+        let mut meta = EQLDB::open_new(path)?;
+        let mary = json!({
+            "name": "Mary Doe",
+            "age": 34
+        });
+
+        meta.insert("type1", "key2", &mary)?;
+
+        let john = json!({
+            "name": "John Doe",
+            "age": 43,
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ]
+        });
+
+        meta.insert("type1", "key1", &john)?;
+
+        let v1: Vec<EQLRecord> = meta
+            .execute_script("reduce(scan(type1),#\"rec.value=recs.reduce(|r1,r2| {if r2.value[\"age\"]!=(){r1+=r2.value[\"age\"];}r1},0);print(rec);\"#)")?
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::Null, v1[0].key);
+        assert_eq!(json!(77), v1[0].value);
+    }
+    EQLDB::destroy(path)?;
+    Ok(())
+}

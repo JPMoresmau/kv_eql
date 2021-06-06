@@ -195,6 +195,14 @@ impl EQLDB {
         })
     }
 
+     /// Opens the database
+    /// # Arguments
+    /// * `path` - The folder where the database and metadata reside
+    pub fn open_new<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::destroy(&path)?;
+        Self::open(path)
+    }
+
     /// Destroys fully a database, removing the folder and metadata
     /// # Arguments
     /// * `path` - The folder where the database and metadata reside
