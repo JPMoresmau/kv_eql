@@ -561,8 +561,8 @@ impl EQLDB {
                 while orec1.is_some() || orec2.is_some() {
                     if let Some(rec1) = &orec1 {
                         if let Some(rec2) = &orec2 {
-                            let k1 = values_key(&RecordExtract::multiple(&first_key, rec1));
-                            let k2 = values_key(&RecordExtract::multiple(&second_key, rec2));
+                            let k1 = serde_json::to_vec(&first_key.apply(rec1).unwrap_or_else(|| Value::Null)).unwrap();
+                            let k2 = serde_json::to_vec(&second_key.apply(rec2).unwrap_or_else(|| Value::Null)).unwrap();
                             match k1.cmp(&k2) {
                                 Ordering::Less => {
                                     if let Some(rec3) =  join((Some(rec1), None))?{
@@ -684,17 +684,6 @@ fn index_key<T: AsRef<str>, K: AsRef<[u8]>>(on: &[T], key: &K, value: &Value) ->
     }
     for k in key.as_ref() {
         v.push(*k);
-    }
-    v
-}
-
-/// Builds a key from a list of values
-/// The key is made of the serialized values separated by 0
-fn values_key(values: &[Value]) -> Vec<u8> {
-    let mut v = vec![];
-    for v2 in values {
-        v.append(&mut serde_json::to_vec(v2).unwrap());
-        v.push(0);
     }
     v
 }

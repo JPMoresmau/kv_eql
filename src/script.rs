@@ -18,6 +18,8 @@ pub enum ScriptedRecordExtract {
     Pointer(String),
     /// Arbitrary function to retrieve a value
     Script(String),
+    /// Multiple extraction
+    Multiple(Vec<ScriptedRecordExtract>),
   }
   
 impl ScriptedRecordExtract {
@@ -56,6 +58,13 @@ impl ScriptedRecordExtract {
                 },
               }
             })))
+          },
+          ScriptedRecordExtract::Multiple(v)=> {
+            let mut vs=vec![];
+            for sor in v.into_iter(){
+              vs.push(sor.into_rust()?);
+            }
+            Ok(RecordExtract::Multiple(vs))
           },
         }
       }
@@ -98,9 +107,9 @@ pub enum ScriptedOperation {
   },
   Merge {
       first: Box<ScriptedOperation>,
-      first_key: Vec<ScriptedRecordExtract>,
+      first_key: ScriptedRecordExtract,
       second: Box<ScriptedOperation>,
-      second_key: Vec<ScriptedRecordExtract>,
+      second_key: ScriptedRecordExtract,
       join: String,
   },
   Process {
@@ -121,7 +130,7 @@ pub fn eql_engine() -> Engine {
   engine.register_result_fn("hash_lookup",|build: Dynamic,build_hash: Dynamic, probe: Dynamic, probe_hash: Dynamic, join: ImmutableString| to_dynamic(ScriptedOperation::HashLookup{build:Box::new(from_dynamic(&build)?),build_hash:from_dynamic(&build_hash)?,probe:Box::new(from_dynamic(&probe)?),probe_hash:from_dynamic(&probe_hash)?,join:join.into_owned()}));
   engine.register_result_fn("merge",|first: Dynamic,first_key: Dynamic, second: Dynamic, second_key: Dynamic, join: ImmutableString| to_dynamic(ScriptedOperation::Merge{first:Box::new(from_dynamic(&first)?),first_key:from_dynamic(&first_key)?,second:Box::new(from_dynamic(&second)?),second_key:from_dynamic(&second_key)?,join:join.into_owned()}));
   engine.register_result_fn("process",|op: Dynamic,process: ImmutableString| to_dynamic(ScriptedOperation::Process{operation:Box::new(from_dynamic(&op)?),process:process.into_owned()}));
-  
+  engine.register_result_fn("empty_record", || to_dynamic(EQLRecord::empty()));
   engine
 }
 
@@ -172,9 +181,9 @@ impl ScriptedOperation {
             ,
           ScriptedOperation::Merge{first, first_key,second,second_key,join}=>{
             let op1=first.into_rust(engine)?;
-            let k1=first_key.into_iter().map(|s| s.into_rust()).collect::<Result<Vec<RecordExtract>>>()?;
+            let k1=first_key.into_rust()?;
             let op2=second.into_rust(engine)?;
-            let k2=second_key.into_iter().map(|s| s.into_rust()).collect::<Result<Vec<RecordExtract>>>()?;
+            let k2=second_key.into_rust()?;
             let ast = engine.compile(&join)?;
 
             Ok(Operation::Merge{first:Box::new(op1),first_key:k1,second:Box::new(op2),second_key:k2,join:Box::new(move |(rec1,rec2)|{

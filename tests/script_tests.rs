@@ -348,3 +348,48 @@ fn test_hash() -> Result<()> {
     EQLDB::destroy(path)?;
     Ok(())
 }
+
+
+#[test]
+fn test_merge() -> Result<()> {
+    let path = "test_merge.db";
+    {
+        let mut eql = EQLDB::open(path)?;
+        write_northwind_data(&mut eql)?;
+        let v1: Vec<EQLRecord> = eql
+            .execute_script("merge(scan(categories),key,index_lookup(products,product_category_id,[],[\"category_id\"]),pointer(\"/category_id\"),#\"let rec3=empty_record();if rec2.value!=(){rec3.key=rec2.key;rec3.value=#{description:rec1.value[\"description\"]};rec3.value.fill_with(rec2.value);};rec3\"#)")?
+            .collect();
+        assert_eq!(4, v1.len());
+        let keys1: Vec<Value> = v1.iter().map(|t| t.key.clone()).collect();
+        assert_eq!(true, keys1.contains(&Value::from(1)));
+        assert_eq!(true, keys1.contains(&Value::from(2)));
+        assert_eq!(true, keys1.contains(&Value::from(3)));
+        assert_eq!(true, keys1.contains(&Value::from(4)));
+        assert_eq!(
+            4,
+            v1.iter()
+                .filter(|EQLRecord { key, value, .. }| {
+                    if let Some(m) = value.as_object() {
+                        if key == &Value::from(1) || key == &Value::from(2) {
+                            assert_eq!(
+                                Some(&Value::from("Soft drinks, coffees, teas, beers, and ales")),
+                                m.get("description")
+                            );
+                        } else {
+                            assert_eq!(
+                                Some(&Value::from(
+                                    "Sweet and savory sauces, relishes, spreads, and seasonings"
+                                )),
+                                m.get("description")
+                            );
+                        }
+                        return true;
+                    }
+                    return false;
+                })
+                .count()
+        );
+    }
+    EQLDB::destroy(path)?;
+    Ok(())
+}

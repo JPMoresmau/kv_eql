@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Value};
+use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
 };
@@ -55,9 +55,9 @@ pub enum Operation<'a> {
     },
     Merge {
         first: Box<Operation<'a>>,
-        first_key: Vec<RecordExtract>,
+        first_key: RecordExtract,
         second: Box<Operation<'a>>,
-        second_key: Vec<RecordExtract>,
+        second_key: RecordExtract,
         join: MergeJoinFunction<'a>,
     },
     Process {
@@ -207,9 +207,9 @@ where
 /// The join uses key comparisons so expects the two sets of keys to be in the same order
 pub fn merge<'a, F>(
     first: Operation<'a>,
-    first_key: Vec<RecordExtract>,
+    first_key: RecordExtract,
     second: Operation<'a>,
-    second_key: Vec<RecordExtract>,
+    second_key: RecordExtract,
     join: F,
 ) -> Operation<'a>
 where
@@ -291,6 +291,8 @@ pub enum RecordExtract {
     Pointer(String),
     /// Arbitrary function to retrieve a value
     Function(Box<dyn Fn(&EQLRecord) -> Value>),
+    /// Multiple extract
+    Multiple(Vec<RecordExtract>),
 }
 
 impl RecordExtract {
@@ -316,14 +318,11 @@ impl RecordExtract {
                 }
                 Some(v)
             },
+            RecordExtract::Multiple(v) => {
+                let vs:Vec<Value>=v.iter().filter_map(|e| e.apply(rec)).collect();
+                Some(Value::Array(vs))
+            },
         }
     }
 
-    /// Apply multiple extracts to a record, return the values obtained
-    /// # Arguments
-    /// * `exs` - The extracts
-    /// * `rec` - The record
-    pub(crate) fn multiple(exs: &[RecordExtract], rec: &EQLRecord ) -> Vec<Value> {
-        exs.iter().filter_map(|e| e.apply(rec)).collect()
-    }
 }

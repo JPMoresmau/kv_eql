@@ -16,6 +16,7 @@ pub fn parse_operation<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(i
         parse_index_lookup,
         parse_nested_loops,
         parse_hash_lookup,
+        parse_merge,
     ))(input)
 }
 
@@ -189,8 +190,39 @@ fn parse_hash_lookup<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(inp
     )(input)
 }
 
+fn parse_merge<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedOperation, Error> {
+    map(
+        preceded(
+            spaced("merge"),
+            preceded(
+                spaced("("),
+                cut(terminated(
+                    preceded(sp, 
+                        separated_pair(
+                        separated_pair(
+                            separated_pair(parse_operation, spaced(","), parse_record_extract),
+                            spaced(","),
+                            separated_pair(parse_operation, spaced(","), parse_record_extract)),
+                            spaced(","),
+                            quoted_str)
+                        ),
+                    preceded(sp, char(')')),
+                )),
+            ),
+        )
+        ,|(((first,first_key),(second,second_key)),join)| ScriptedOperation::Merge{
+            first: Box::new(first),
+            first_key,
+            second: Box::new(second),
+            second_key,
+            join:join.into()
+        }
+    )(input)
+}
+
+
 fn parse_record_extract<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedRecordExtract, Error> {
-    alt((parse_record_extract_key,parse_record_extract_value,parse_record_extract_pointer,parse_record_extract_script))(input)
+    alt((parse_record_extract_key,parse_record_extract_value,parse_record_extract_pointer,parse_record_extract_script,parse_record_extract_multiple))(input)
 }
 
 fn parse_record_extract_key<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedRecordExtract, Error> {
@@ -210,6 +242,12 @@ fn parse_record_extract_script<'a, Error: ParseError<&'a str> + ContextError<&'a
     map(preceded(spaced("script"),preceded(spaced("("),terminated(parse_eql_string,spaced(")"))))
     ,|s| ScriptedRecordExtract::Pointer(s))(input)
 }
+
+fn parse_record_extract_multiple<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(input: &'a str) -> IResult<&'a str, ScriptedRecordExtract, Error> {
+    map(preceded(spaced("["),terminated(separated_list0(preceded(sp, char(',')), parse_record_extract),spaced("]")))
+    ,|s| ScriptedRecordExtract::Multiple(s))(input)
+}
+
 
 fn parse_eql_string<'a, Error: ParseError<&'a str>>(
     input: &'a str,
@@ -616,7 +654,7 @@ mod tests {
 
     #[test]
     fn test_parse_hash_lookup(){
-        let input="hash_lookup(scan(categories),key,scan(products),pointer(\"/category_id\"),#\"rec2.value[\"description\"]=rec1.value[\"description\"]\"#)";
+        let input="hash_lookup(scan(categories),key,scan(products),pointer(\"/category_id\"),#\"probe.value[\"description\"]=build.value[\"description\"];probe\"#)";
         match parse_operation_verbose(input) {
             Ok(op) => {
                 assert_eq!(
@@ -625,14 +663,34 @@ mod tests {
                         build_hash: ScriptedRecordExtract::Key,
                         probe: Box::new(ScriptedOperation::Scan{name:"products".into()}),
                         probe_hash: ScriptedRecordExtract::pointer("/category_id"),
-                        join: "rec2.value[\"description\"]=rec1.value[\"description\"]".into()
+                        join: "probe.value[\"description\"]=build.value[\"description\"];probe".into()
                     },
                     op.1
                 );
             }
             Err(e) => panic!("Cannot parse: {}: {}", input, e),
         }
-        
+    }
+
+    #[test]
+    fn test_parse_merge(){
+        let input="merge(scan(categories),key,index_lookup(products,product_category_id,[],[\"category_id\"]),pointer(\"/category_id\"),#\"let rec3=empty_record();if rec2.value!=(){rec3.key=rec2.key;rec3.value=#{description:rec1.value[\"description\"]};rec3.value.fill_with(rec2.value);};rec3\"#)";
+        match parse_operation_verbose(input) {
+            Ok(op) => {
+                assert_eq!(
+                    ScriptedOperation::Merge {
+                        first: Box::new(ScriptedOperation::Scan{name:"categories".into()}),
+                        first_key: ScriptedRecordExtract::Key,
+                        second: Box::new(ScriptedOperation::IndexLookup{name:"products".into(),index_name:"product_category_id".into(),values:vec![],keys:vec!["category_id".into()]}),
+                        second_key: ScriptedRecordExtract::pointer("/category_id"),
+                        join: "let rec3=empty_record();if rec2.value!=(){rec3.key=rec2.key;rec3.value=#{description:rec1.value[\"description\"]};rec3.value.fill_with(rec2.value);};rec3".into()
+                    },
+                    op.1
+                );
+            }
+            Err(e) => panic!("Cannot parse: {}: {}", input, e),
+        }
+
     }
 
 }

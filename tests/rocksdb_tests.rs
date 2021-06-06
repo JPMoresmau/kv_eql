@@ -575,14 +575,14 @@ fn test_merge() -> Result<()> {
         let v1: Vec<EQLRecord> = eql
             .execute(merge(
                 scan("categories"),
-                vec![RecordExtract::Key],
+                RecordExtract::Key,
                 index_lookup_keys(
                     "products",
                     "product_category_id",
                     vec![],
                     vec!["category_id"],
                 ),
-                vec![RecordExtract::pointer("/category_id")],
+                RecordExtract::pointer("/category_id"),
                 |(orec1, orec2)| {
                     Ok(orec1
                         .map(|rec1| {
