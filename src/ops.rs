@@ -6,7 +6,6 @@ use std::{
 use anyhow::Result;
 use thiserror::Error;
 
-
 #[derive(Error, Debug)]
 pub enum QueryError {
     #[error("Script error in nested loops: {0}")]
@@ -77,6 +76,34 @@ type HashJoinFunction<'a> = Box<dyn Fn((Option<&EQLRecord>, EQLRecord)) -> Resul
 /// the underlying type for Merge join function
 type MergeJoinFunction<'a> = Box<dyn Fn((Option<&EQLRecord>, Option<&EQLRecord>)) -> Result<Option<EQLRecord>> +'a>;
 
+/// Allows us to pass either an owned Value or a reference to a Value (I couldn't get Cow or Supercow to work)
+pub enum ValueRef<'a> {
+    Owned(Value),
+    Borrowed(&'a Value),
+}
+
+impl <'a> ValueRef<'a> {
+    fn into_owned(self) -> Value {
+        match self {
+            ValueRef::Owned(v)=>v,
+            ValueRef::Borrowed(vr)=>vr.clone(),
+        }
+    }
+}
+
+impl <'a> From<Value> for ValueRef<'a> {
+    fn from(v: Value) -> Self{
+        ValueRef::Owned(v)
+    }
+}
+
+impl <'a> From<&'a Value> for ValueRef<'a> {
+    fn from(v: &'a Value) -> Self{
+        ValueRef::Borrowed(v)
+    }
+}
+
+
 /// Builds an operation to scan a whole record type
 /// # Arguments
 /// * `name` - the name of the record type
@@ -85,14 +112,15 @@ pub fn scan<'a, N: Into<String>>(name: N) -> Operation<'a> {
     Operation::Scan { name: name.into() }
 }
 
+
 /// Builds an operation to perform a single key lookup
 /// # Arguments
 /// * `name` - the name of the record type
 /// * `key` - the key
-pub fn key_lookup<'a, N: Into<String>>(name: N, key: Value) -> Operation<'a> {
+pub fn key_lookup<'a,'b, N: Into<String>, V:Into<ValueRef<'b>>>(name: N, key: V) -> Operation<'a> {
     Operation::KeyLookup {
         name: name.into(),
-        key,
+        key: key.into().into_owned(),
     }
 }
 
@@ -115,9 +143,9 @@ pub fn extract<'a>(extract: &[&str], operation: Operation<'a>) -> Operation<'a> 
 /// # Arguments
 /// * `value` - the value to merge with the values from the wrapped operation
 /// * `operation` - the wrapped operation
-pub fn augment<'a>(value: Value, operation: Operation<'a>) -> Operation <'a>{
+pub fn augment<'a,'b, V:Into<ValueRef<'b>>>(value: V, operation: Operation<'a>) -> Operation <'a>{
     Operation::Augment {
-        value,
+        value: value.into().into_owned(),
         operation: Box::new(operation),
     }
 }

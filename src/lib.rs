@@ -57,10 +57,10 @@ eql
    extract(&["description"], scan("categories")),
    |rec| {
        Ok(augment(
-           rec.value.clone(),
+           &rec.value,
            nested_loops(
                index_lookup("products", "product_category_id", vec![rec.key.clone()]),
-               |rec| Ok(key_lookup("products", rec.key.clone())),
+               |rec| Ok(key_lookup("products", &rec.key)),
            ),
        ))
    },
@@ -72,6 +72,8 @@ the product value with the description
 In this example, it would probably be faster to scan both categories and products since we want all products, and do a hash join
 ```no_run
 # use kv_eql::*;
+# use serde_json::Value;
+# 
 # let eql = EQLDB::open("")?;
 eql.execute(hash_lookup(
    scan("categories"),
@@ -81,7 +83,9 @@ eql.execute(hash_lookup(
    |(o, mut rec)| {
        Ok(o.map(|rec1| {
            if let Some(d) = rec1.value.pointer("/description"){
-               rec.value.as_object_mut().unwrap().insert(String::from("description"), d.clone());
+               if let Value::Object(ref mut map) = rec.value {
+                    map.insert(String::from("description"), d.clone());
+               }
            }
            rec
        }))

@@ -128,10 +128,17 @@ fn test_lookup() -> Result<()> {
         });
 
         meta.insert("type1", "key2", &mary)?;
-
+        let k1=Value::from("key1");
         //let v1=vec![(b"key1",&john),(b"key2",&mary)];
-        let v1: Vec<EQLRecord> = meta
-            .execute(key_lookup("type1", Value::from("key1")))?
+        let mut v1: Vec<EQLRecord> = meta
+            .execute(key_lookup("type1", &k1))?
+            .collect();
+        assert_eq!(1, v1.len());
+        assert_eq!(Value::from("key1"), v1[0].key);
+        assert_eq!(john, v1[0].value);
+
+        v1 = meta
+            .execute(key_lookup("type1", k1))?
             .collect();
         assert_eq!(1, v1.len());
         assert_eq!(Value::from("key1"), v1[0].key);
@@ -364,7 +371,7 @@ fn test_index_nested_loops() -> Result<()> {
         let v1: Vec<EQLRecord> = eql
             .execute(nested_loops(
                 index_lookup("type1", "idx1", vec![json!("John Doe")]),
-                |rec| Ok(key_lookup("type1", rec.key.clone())),
+                |rec| Ok(key_lookup("type1", &rec.key)),
             ))?
             .collect();
         assert_eq!(1, v1.len());
@@ -376,8 +383,8 @@ fn test_index_nested_loops() -> Result<()> {
                 index_lookup_keys("type1", "idx1", vec![json!("John Doe")], vec!["", "ageix"]),
                 |rec| {
                     Ok(augment(
-                        rec.value.clone(),
-                        key_lookup("type1", rec.key.clone()),
+                        &rec.value,
+                        key_lookup("type1", &rec.key),
                     ))
                 },
             ))?
@@ -462,10 +469,10 @@ fn test_two_types_nested_loops() -> Result<()> {
                 extract(&["description"], scan("categories")),
                 |rec| {
                     Ok(augment(
-                        rec.value.clone(),
+                        &rec.value,
                         nested_loops(
                             index_lookup("products", "product_category_id", vec![rec.key.clone()]),
-                            |rec| Ok(key_lookup("products", rec.key.clone())),
+                            |rec| Ok(key_lookup("products", &rec.key)),
                         ),
                     ))
                 },
@@ -521,10 +528,9 @@ fn test_hash() -> Result<()> {
                 |(o, mut rec)| {
                     Ok(o.map(|rec1| {
                         if let Some(d) = rec1.value.pointer("/description") {
-                            rec.value
-                                .as_object_mut()
-                                .unwrap()
-                                .insert(String::from("description"), d.clone());
+                            if let Value::Object(ref mut map) = rec.value {
+                                map.insert(String::from("description"), d.clone());
+                            }
                         }
                         rec
                     }))
@@ -589,10 +595,9 @@ fn test_merge() -> Result<()> {
                             orec2.map(|rec2| {
                                 let mut rec3 = rec2.clone();
                                 if let Some(d) = rec1.value.pointer("/description") {
-                                    rec3.value
-                                        .as_object_mut()
-                                        .unwrap()
-                                        .insert(String::from("description"), d.clone());
+                                    if let Value::Object(ref mut map) = rec3.value {
+                                        map.insert(String::from("description"), d.clone());
+                                    }
                                 }
                                 rec3
                             })
@@ -679,11 +684,11 @@ fn test_process() -> Result<()> {
                 scan("type1"),
                 Box::new(|it: Box<dyn Iterator<Item = EQLRecord>>| {
                     Ok(Box::new(it.map(|mut r| {
-                        if let Some(m) = r.value.as_object_mut() {
-                            if let Some(v) = m.get("age") {
+                        if let Value::Object(ref mut map) = r.value {
+                            if let Some(v) = map.get("age") {
                                 if let Some(i) = v.as_i64() {
                                     let v2 = json!(format!("{}", i));
-                                    m.insert(String::from("age"), v2);
+                                    map.insert(String::from("age"), v2);
                                 }
                             }
                         }
