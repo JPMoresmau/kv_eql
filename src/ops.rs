@@ -51,7 +51,7 @@ pub enum Operation<'a> {
         first: Box<Operation<'a>>,
         second: Box<dyn Fn(&EQLRecord) -> Result<Operation<'a>> + 'a>,
     },
-    HashLookup {
+    HashJoin {
         build: Box<Operation<'a>>,
         build_hash: RecordExtract,
         probe: Box<Operation<'a>>,
@@ -212,7 +212,7 @@ where
 /// * `probe_hash` - the function to build a value from each record from the second operation, returning None if we want to ignore that record
 /// * `join` - the function to join the record from the first operation if it exists and the record from the second operation. Two records
 /// are joined when they gave the same value via `build_hash` and `probe_hash`
-pub fn hash_lookup<'a,F>(
+pub fn hash_join<'a,F>(
     build: Operation<'a>,
     build_hash: RecordExtract,
     probe: Operation<'a>,
@@ -222,7 +222,7 @@ pub fn hash_lookup<'a,F>(
 where
     F: Fn((Option<&EQLRecord>, EQLRecord)) -> Result<Option<EQLRecord>> + 'a,
 {
-    Operation::HashLookup {
+    Operation::HashJoin {
         build: Box::new(build),
         build_hash,
         probe: Box::new(probe),

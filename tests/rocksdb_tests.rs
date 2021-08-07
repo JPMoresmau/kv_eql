@@ -2,7 +2,7 @@ use std::iter;
 
 use anyhow::Result;
 use kv_eql::{
-    augment, extract, hash_lookup, index_lookup, index_lookup_keys, key_lookup, merge,
+    augment, extract, hash_join, index_lookup, index_lookup_keys, key_lookup, merge,
     nested_loops, process, scan, EQLBatch, EQLRecord, RecordExtract, EQLDB,
 };
 use serde_json::json;
@@ -520,7 +520,7 @@ fn test_hash() -> Result<()> {
         let mut eql = EQLDB::open(path)?;
         write_northwind_data(&mut eql)?;
         let v1: Vec<EQLRecord> = eql
-            .execute(hash_lookup(
+            .execute(hash_join(
                 scan("categories"),
                 RecordExtract::Key,
                 scan("products"),

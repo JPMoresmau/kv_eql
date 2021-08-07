@@ -98,7 +98,7 @@ pub enum ScriptedOperation {
       first: Box<ScriptedOperation>,
       second: String,
   },
-  HashLookup {
+  HashJoin {
       build: Box<ScriptedOperation>,
       build_hash: ScriptedRecordExtract,
       probe: Box<ScriptedOperation>,
@@ -131,7 +131,7 @@ pub fn eql_engine() -> Engine {
   engine.register_result_fn("index_lookup",|name: ImmutableString, index: ImmutableString, values: Dynamic| to_dynamic(ScriptedOperation::IndexLookup{name:name.into_owned(),index_name:index.into_owned(),values:from_dynamic(&values)?,keys:vec![]}));
   engine.register_result_fn("index_lookup",|name: ImmutableString, index: ImmutableString, values: Dynamic, keys: Dynamic| to_dynamic(ScriptedOperation::IndexLookup{name:name.into_owned(),index_name:index.into_owned(),values:from_dynamic(&values)?,keys:from_dynamic(&keys)?}));
   engine.register_result_fn("nested_loops",|op: Dynamic,second: ImmutableString| to_dynamic(ScriptedOperation::NestedLoops{first:Box::new(from_dynamic(&op)?),second:second.into_owned()}));
-  engine.register_result_fn("hash_lookup",|build: Dynamic,build_hash: Dynamic, probe: Dynamic, probe_hash: Dynamic, join: ImmutableString| to_dynamic(ScriptedOperation::HashLookup{build:Box::new(from_dynamic(&build)?),build_hash:from_dynamic(&build_hash)?,probe:Box::new(from_dynamic(&probe)?),probe_hash:from_dynamic(&probe_hash)?,join:join.into_owned()}));
+  engine.register_result_fn("hash_join",|build: Dynamic,build_hash: Dynamic, probe: Dynamic, probe_hash: Dynamic, join: ImmutableString| to_dynamic(ScriptedOperation::HashJoin{build:Box::new(from_dynamic(&build)?),build_hash:from_dynamic(&build_hash)?,probe:Box::new(from_dynamic(&probe)?),probe_hash:from_dynamic(&probe_hash)?,join:join.into_owned()}));
   engine.register_result_fn("merge",|first: Dynamic,first_key: Dynamic, second: Dynamic, second_key: Dynamic, join: ImmutableString| to_dynamic(ScriptedOperation::Merge{first:Box::new(from_dynamic(&first)?),first_key:from_dynamic(&first_key)?,second:Box::new(from_dynamic(&second)?),second_key:from_dynamic(&second_key)?,join:join.into_owned()}));
   engine.register_result_fn("map",|op: Dynamic,process: ImmutableString| to_dynamic(ScriptedOperation::Map{operation:Box::new(from_dynamic(&op)?),process:process.into_owned()}));
   engine.register_result_fn("reduce",|op: Dynamic,process: ImmutableString| to_dynamic(ScriptedOperation::Reduce{operation:Box::new(from_dynamic(&op)?),process:process.into_owned()}));
@@ -172,14 +172,14 @@ impl ScriptedOperation {
                             
             })})
           }),
-          ScriptedOperation::HashLookup{build,build_hash,probe,probe_hash,join}=>{
+          ScriptedOperation::HashJoin{build,build_hash,probe,probe_hash,join}=>{
             let op1=build.into_rust(engine)?;
             let s1=build_hash.into_rust()?;
             let op2=probe.into_rust(engine)?;
             let s2=probe_hash.into_rust()?;
             let ast = engine.compile(&join)?;
 
-            Ok(Operation::HashLookup{build:Box::new(op1),build_hash:s1,probe:Box::new(op2),probe_hash:s2,join:Box::new(move |(rec1,rec2)|{
+            Ok(Operation::HashJoin{build:Box::new(op1),build_hash:s1,probe:Box::new(op2),probe_hash:s2,join:Box::new(move |(rec1,rec2)|{
               let mut scope = Scope::new();
               let e=EQLRecord::empty();
               scope.push_constant_dynamic("build", eql_to_dynamic(rec1.unwrap_or(&e))?);

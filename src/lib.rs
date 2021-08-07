@@ -75,7 +75,7 @@ In this example, it would probably be faster to scan both categories and product
 # use serde_json::Value;
 # 
 # let eql = EQLDB::open("")?;
-eql.execute(hash_lookup(
+eql.execute(hash_join(
    scan("categories"),
    RecordExtract::Key,
    scan("products"),
@@ -539,7 +539,7 @@ impl EQLDB {
                 ;
 
             }
-            Operation::HashLookup {
+            Operation::HashJoin {
                 build,
                 build_hash,
                 probe,

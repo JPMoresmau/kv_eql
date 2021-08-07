@@ -182,7 +182,7 @@ fn parse_hash_lookup<'a, Error: ParseError<&'a str> + ContextError<&'a str>>(inp
                 )),
             ),
         )
-        ,|(((build,build_hash),(probe,probe_hash)),join)| ScriptedOperation::HashLookup{
+        ,|(((build,build_hash),(probe,probe_hash)),join)| ScriptedOperation::HashJoin{
             build: Box::new(build),
             build_hash,
             probe: Box::new(probe),
@@ -701,7 +701,7 @@ mod tests {
         match parse_operation_verbose(input) {
             Ok(op) => {
                 assert_eq!(
-                    ScriptedOperation::HashLookup {
+                    ScriptedOperation::HashJoin {
                         build: Box::new(ScriptedOperation::Scan{name:"categories".into()}),
                         build_hash: ScriptedRecordExtract::Key,
                         probe: Box::new(ScriptedOperation::Scan{name:"products".into()}),
